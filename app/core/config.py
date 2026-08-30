@@ -1,0 +1,101 @@
+"""Application settings.
+
+This is the ONLY place that reads the environment. Everything else imports
+`settings` from here - no `os.getenv` anywhere else in the codebase.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import Field, PostgresDsn, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+AgentEffort = Literal["low", "medium", "high", "xhigh", "max"]
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # -- Application ------------------------------------------------------
+    app_env: Literal["local", "staging", "production"] = "local"
+    log_level: str = "INFO"
+    internal_api_key: str = "change-me"
+
+    # -- Database ---------------------------------------------------------
+    # Pooler (port 6543) for the app; direct (port 5432) for Alembic DDL.
+    database_url: PostgresDsn
+    database_direct_url: PostgresDsn
+    db_echo: bool = False
+
+    # -- Supabase (Storage only) ------------------------------------------
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_media_bucket: str = "media"
+
+    # -- Anthropic / agent ------------------------------------------------
+    anthropic_api_key: str = ""
+    agent_model: str = "claude-opus-5"
+    agent_effort: AgentEffort = "low"
+    agent_max_tokens: int = 16_000
+    agent_max_iterations: int = 8
+
+    # -- WhatsApp ---------------------------------------------------------
+    whatsapp_phone_number_id: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_verify_token: str = ""
+    whatsapp_app_secret: str = ""
+    whatsapp_graph_api_version: str = "v21.0"
+
+    # -- Telegram ---------------------------------------------------------
+    telegram_bot_token: str = ""
+    telegram_webhook_secret: str = ""
+
+    # -- Razorpay ---------------------------------------------------------
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+
+    # -- Multi-tenant routing --------------------------------------------
+    # For single-business deployments: the slug of the business that all
+    # inbound webhook messages are routed to. Multi-tenant routing (mapping
+    # phone-number-id or bot-token to a business slug) can be layered on top
+    # when needed.
+    default_business_slug: str = ""
+
+    @field_validator("database_url", "database_direct_url")
+    @classmethod
+    def _require_asyncpg_driver(cls, v: PostgresDsn) -> PostgresDsn:
+        """Both URLs are consumed by async SQLAlchemy engines.
+
+        A bare ``postgresql://`` URL silently selects the sync psycopg2 driver
+        and fails at connect time with a confusing error, so reject it here.
+        """
+        if v.scheme != "postgresql+asyncpg":
+            raise ValueError(
+                f"expected scheme 'postgresql+asyncpg', got '{v.scheme}'. "
+                "Rewrite the Supabase connection string accordingly."
+            )
+        return v
+
+    @property
+    def is_local(self) -> bool:
+        return self.app_env == "local"
+
+    @property
+    def whatsapp_graph_base_url(self) -> str:
+        return f"https://graph.facebook.com/{self.whatsapp_graph_api_version}"
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()  # type: ignore[call-arg]  # values come from the environment
+
+
+settings = get_settings()
