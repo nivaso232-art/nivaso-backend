@@ -213,6 +213,11 @@ class GeminiAgentRunner:
         knowledge_titles: Sequence[str] = (),
     ) -> str:
         started_at = time.monotonic()
+        # Capture as a primitive up front: after a rollback the ORM objects are
+        # expired, so reading self.ctx.conversation_id in the except handler
+        # would trigger a lazy reload (and a MissingGreenlet) that masks the
+        # real error.
+        conversation_id_str = str(self.ctx.conversation_id)
 
         # build_cached_system returns Anthropic-style text blocks; Gemini takes a
         # plain system_instruction string, so pull the text back out.
@@ -394,7 +399,8 @@ class GeminiAgentRunner:
             log.exception(
                 "agent_turn_failed",
                 provider="gemini",
-                conversation_id=str(self.ctx.conversation_id),
+                conversation_id=conversation_id_str,
+                error=str(exc),
             )
             raise AgentError(f"Agent turn failed: {exc}") from exc
 

@@ -179,18 +179,21 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
                 log.info("whatsapp_message_duplicate", wamid=msg.external_message_id)
                 return
 
+            # Inside the UoW so the session has no open transaction when the
+            # runner opens its own UnitOfWork; otherwise that UoW is a
+            # non-committing passthrough and the reply + tool rows are lost.
+            catalog_svc = CatalogService(session, business.id)
+            knowledge_svc = KnowledgeService(session, business.id)
+            categories = await catalog_svc.list_categories()
+            summary = await knowledge_svc.index_summary()
+            knowledge_titles = [a["title"] for a in summary]
+
     except NotFoundError as exc:
         log.error("whatsapp_business_not_found", slug=settings.default_business_slug, error=str(exc))
         return
 
-    # Run agent turn — needs its own UnitOfWork scope inside the runner.
+    # Run agent turn — the runner opens its own UnitOfWork to commit its writes.
     try:
-        catalog_svc = CatalogService(session, business.id)
-        knowledge_svc = KnowledgeService(session, business.id)
-        categories = await catalog_svc.list_categories()
-        summary = await knowledge_svc.index_summary()
-        knowledge_titles = [a["title"] for a in summary]
-
         ctx = ToolContext(
             session=session,
             business=business,

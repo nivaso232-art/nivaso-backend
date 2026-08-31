@@ -178,6 +178,10 @@ class AgentRunner:
         inside a single transaction owned by a ``UnitOfWork`` here.
         """
         started_at = time.monotonic()
+        # Primitive up front: after a rollback the ORM objects are expired, so
+        # reading self.ctx.conversation_id in the except handler would trigger a
+        # lazy reload (MissingGreenlet) that masks the real error.
+        conversation_id_str = str(self.ctx.conversation_id)
 
         system = build_cached_system(
             self.ctx.business,
@@ -369,7 +373,8 @@ class AgentRunner:
         except Exception as exc:
             log.exception(
                 "agent_turn_failed",
-                conversation_id=str(self.ctx.conversation_id),
+                conversation_id=conversation_id_str,
+                error=str(exc),
             )
             raise AgentError(f"Agent turn failed: {exc}") from exc
 

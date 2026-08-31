@@ -137,17 +137,20 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
             if inbound is None:
                 return
 
+            # Inside the UoW so the session has no open transaction when the
+            # runner opens its own UnitOfWork; otherwise that UoW is a
+            # non-committing passthrough and the reply + tool rows are lost.
+            catalog_svc = CatalogService(session, business.id)
+            knowledge_svc = KnowledgeService(session, business.id)
+            categories = await catalog_svc.list_categories()
+            summary = await knowledge_svc.index_summary()
+            knowledge_titles = [a["title"] for a in summary]
+
     except NotFoundError as exc:
         log.error("telegram_business_not_found", slug=settings.default_business_slug, error=str(exc))
         return
 
     try:
-        catalog_svc = CatalogService(session, business.id)
-        knowledge_svc = KnowledgeService(session, business.id)
-        categories = await catalog_svc.list_categories()
-        summary = await knowledge_svc.index_summary()
-        knowledge_titles = [a["title"] for a in summary]
-
         ctx = ToolContext(
             session=session,
             business=business,

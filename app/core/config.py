@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # -- Gemini (Google AI Studio) ----------------------------------------
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.6-flash"
     agent_effort: AgentEffort = "low"
     agent_max_tokens: int = 16_000
     agent_max_iterations: int = 8

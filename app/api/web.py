@@ -136,11 +136,15 @@ async def chat(
             message_type=MessageType.TEXT,
         )
 
-    catalog_svc = CatalogService(session, business.id)
-    knowledge_svc = KnowledgeService(session, business.id)
-    categories = await catalog_svc.list_categories()
-    summary = await knowledge_svc.index_summary()
-    knowledge_titles = [a["title"] for a in summary]
+        # Fetch agent orientation inside this UoW too, so the session has no open
+        # transaction when the runner opens its own UnitOfWork. Otherwise that UoW
+        # sees an existing transaction, becomes a non-committing passthrough, and
+        # the assistant reply + tool rows are silently rolled back on close.
+        catalog_svc = CatalogService(session, business.id)
+        knowledge_svc = KnowledgeService(session, business.id)
+        categories = await catalog_svc.list_categories()
+        summary = await knowledge_svc.index_summary()
+        knowledge_titles = [a["title"] for a in summary]
 
     ctx = ToolContext(
         session=session,
