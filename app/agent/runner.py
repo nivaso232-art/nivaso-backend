@@ -50,6 +50,11 @@ _EFFORT_BUDGET: dict[str, int] = {
     "max": 16_000,
 }
 
+# Extended thinking requires betas and careful replay of thinking blocks in
+# every subsequent turn. Disabled for now; set to True once the channel
+# handlers and history reconstruction are verified to handle it correctly.
+_THINKING_ENABLED = False
+
 
 def _to_json(value: Any) -> str:
     if isinstance(value, str):
@@ -89,7 +94,6 @@ def _history_to_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
                     "input": m.payload.get("arguments", {}),
                 })
                 i += 1
-            result.append({"role": "assistant", "content": tool_use_blocks})
 
             # Collect the following tool results as one user turn.
             tool_result_blocks: list[dict[str, Any]] = []
@@ -102,8 +106,21 @@ def _history_to_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
                     "is_error": m.payload.get("is_error", False),
                 })
                 i += 1
-            if tool_result_blocks:
-                result.append({"role": "user", "content": tool_result_blocks})
+
+            # Edge case: if the server crashed between recording tool_call and
+            # tool_result rows, the tool_use blocks have no matching results.
+            # The Anthropic API rejects an assistant turn with tool_use blocks
+            # that has no following user:[tool_result] turn. Skip this incomplete
+            # turn entirely — the current user message will re-trigger the tools.
+            if not tool_result_blocks:
+                log.warning(
+                    "history_dangling_tool_call_skipped",
+                    count=len(tool_use_blocks),
+                )
+                continue
+
+            result.append({"role": "assistant", "content": tool_use_blocks})
+            result.append({"role": "user", "content": tool_result_blocks})
 
         elif msg.sender_type == SenderType.CUSTOMER:
             result.append({"role": "user", "content": msg.content or ""})
@@ -115,9 +132,15 @@ def _history_to_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
             i += 1
 
         else:
-            # SYSTEM_NOTE, AGENT (human agent), TOOL rows without a preceding
-            # TOOL_CALL — audit rows, not part of the prompt.
+            # SYSTEM_NOTE, AGENT (human agent) — audit rows, not part of the prompt.
             i += 1
+
+    # Defensive: the Anthropic API requires the messages array to end with a
+    # user turn. If the last entry is an assistant turn (e.g. the previous
+    # reply was recorded but the new inbound has not been appended yet), strip
+    # it — the runner will append the current user_text immediately after.
+    while result and result[-1]["role"] == "assistant":
+        result.pop()
 
     return result
 
@@ -180,12 +203,11 @@ class AgentRunner:
         last_text = ""
         request_ids: list[str] = []
 
-        budget = _EFFORT_BUDGET.get(settings.agent_effort)
-        thinking_param: Any = (
-            {"type": "enabled", "budget_tokens": budget}
-            if budget
-            else anthropic.NOT_GIVEN
-        )
+        # Extended thinking is disabled: thinking blocks must be replayed
+        # verbatim in every subsequent assistant turn or the API rejects the
+        # request. That requires threading them through _history_to_messages
+        # and the assistant_content builder — deferred until fully validated.
+        thinking_param: Any = anthropic.NOT_GIVEN
 
         conv_svc = ConversationService(self.ctx.session, self.ctx.business_id)
         runs_repo = AgentRunRepository(self.ctx.session, self.ctx.business_id)
