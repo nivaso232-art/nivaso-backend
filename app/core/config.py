@@ -41,7 +41,19 @@ class Settings(BaseSettings):
 
     # -- Anthropic / agent ------------------------------------------------
     anthropic_api_key: str = ""
-    agent_model: str = "claude-opus-5"
+    # Required only for identity-linked (Personal) API keys, which must name the
+    # workspace each request acts in. Leave blank for a normal Workspace key.
+    anthropic_workspace_id: str = ""
+    agent_model: str = "claude-sonnet-5"
+
+    # -- LLM provider selection -------------------------------------------
+    # "anthropic" (Claude) or "gemini" (Google AI Studio). Selects which
+    # agent runner app/agent/factory.py builds.
+    llm_provider: Literal["anthropic", "gemini"] = "anthropic"
+
+    # -- Gemini (Google AI Studio) ----------------------------------------
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
     agent_effort: AgentEffort = "low"
     agent_max_tokens: int = 16_000
     agent_max_iterations: int = 8

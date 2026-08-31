@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import func, literal, or_, select
+from sqlalchemy import cast, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import REGCONFIG
 
 from app.models.enums import ProductStatus
 from app.models.product import Product
@@ -58,7 +59,9 @@ class ProductRepository(BaseRepository[Product]):
         if not cleaned:
             return []
 
-        tsquery = func.websearch_to_tsquery(literal("english"), cleaned)
+        # Cast the config to regconfig: SQLAlchemy would otherwise bind "english"
+        # as text, and Postgres has no websearch_to_tsquery(text, text) overload.
+        tsquery = func.websearch_to_tsquery(cast(literal("english"), REGCONFIG), cleaned)
 
         stmt = (
             self._scoped()

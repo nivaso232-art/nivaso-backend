@@ -26,7 +26,7 @@ from fastapi import APIRouter, BackgroundTasks, Header, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context import ToolContext
-from app.agent.runner import AgentRunner
+from app.agent.factory import build_agent_runner
 from app.channels.whatsapp.parser import InboundMessage, is_status_only, parse_webhook
 from app.core.config import settings
 from app.core.db import SessionFactory
@@ -197,7 +197,7 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
             customer=customer,
             conversation=conversation,
         )
-        runner = AgentRunner(ctx)
+        runner = build_agent_runner(ctx)
         reply = await runner.run(
             history=history,
             user_text=msg.text or "[non-text message]",

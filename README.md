@@ -1,6 +1,6 @@
 # Nivaso Backend
 
-AI-powered sales and customer support platform for businesses that sell over **WhatsApp** and **Telegram**. Customers chat naturally in their own language (including Tanglish), and a Claude AI agent handles product discovery, order placement, payment, and support — automatically.
+AI-powered sales and customer support platform for businesses that sell over **WhatsApp** and **Telegram**. Customers chat naturally in their own language (including Tanglish), and an AI agent — **Claude or Gemini** (selectable via `LLM_PROVIDER`) — handles product discovery, order placement, payment, and support — automatically.
 
 ---
 
@@ -57,7 +57,7 @@ If the AI cannot resolve something (refund request, product access problem, comp
 | Database | PostgreSQL (via Supabase) |
 | ORM | SQLAlchemy 2.0 async + asyncpg |
 | Migrations | Alembic |
-| AI | Anthropic SDK — Claude (configurable model) |
+| AI | Anthropic SDK (Claude) **or** Google `google-genai` (Gemini) — selectable via `LLM_PROVIDER` |
 | Payments | Razorpay Payment Links API |
 | Messaging (receive) | WhatsApp Cloud API (Meta) + Telegram Bot API |
 | Messaging (send) | WhatsApp Cloud API + Telegram Bot API |
@@ -847,9 +847,13 @@ Interactive API docs available at `http://localhost:8000/docs` (local env only).
 | `SUPABASE_URL` | No | Supabase project URL (only needed for media storage) |
 | `SUPABASE_SERVICE_ROLE_KEY` | No | Supabase service role key (only for media storage) |
 | `SUPABASE_MEDIA_BUCKET` | No | Storage bucket name (default: `media`) |
-| `ANTHROPIC_API_KEY` | Yes | Anthropic API key |
-| `AGENT_MODEL` | No | Claude model ID (default: `claude-opus-5`) |
-| `AGENT_EFFORT` | No | `low` / `medium` / `high` / `xhigh` / `max` (default: `low`) |
+| `LLM_PROVIDER` | No | `anthropic` (Claude) or `gemini` (Google AI Studio) (default: `anthropic`) |
+| `ANTHROPIC_API_KEY` | Yes† | Anthropic API key (required when `LLM_PROVIDER=anthropic`) |
+| `ANTHROPIC_WORKSPACE_ID` | No | Only for identity-linked (Personal) Anthropic keys; blank for a Workspace key |
+| `AGENT_MODEL` | No | Claude model ID (default: `claude-sonnet-5`) |
+| `GEMINI_API_KEY` | Yes† | Google AI Studio API key (required when `LLM_PROVIDER=gemini`) |
+| `GEMINI_MODEL` | No | Gemini model ID (default: `gemini-2.5-flash`) |
+| `AGENT_EFFORT` | No | Claude effort: `low` / `medium` / `high` / `xhigh` / `max` (default: `low`) |
 | `AGENT_MAX_TOKENS` | No | Max tokens per agent turn (default: `16000`) |
 | `AGENT_MAX_ITERATIONS` | No | Max tool-call loop iterations (default: `8`) |
 | `WHATSAPP_PHONE_NUMBER_ID` | Yes* | Meta phone number ID |
@@ -865,6 +869,7 @@ Interactive API docs available at `http://localhost:8000/docs` (local env only).
 | `DEFAULT_BUSINESS_SLUG` | Yes | Slug of the business inbound webhooks route to |
 
 *Required only if using that channel/provider.
+†Required only for the selected `LLM_PROVIDER` (one of `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`).
 
 ---
 

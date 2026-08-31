@@ -11,7 +11,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import func, literal, select
+from sqlalchemy import REAL, cast, func, literal, select
+from sqlalchemy.dialects.postgresql import ARRAY, REGCONFIG
 
 from app.models.enums import KnowledgeStatus
 from app.models.knowledge import Knowledge
@@ -48,8 +49,15 @@ class KnowledgeRepository(BaseRepository[Knowledge]):
         if not cleaned:
             return []
 
-        tsquery = func.websearch_to_tsquery(literal("english"), cleaned)
-        rank = func.ts_rank(literal(TS_RANK_WEIGHTS), Knowledge.search_doc, tsquery)
+        # regconfig cast: no websearch_to_tsquery(text, text) overload exists.
+        tsquery = func.websearch_to_tsquery(cast(literal("english"), REGCONFIG), cleaned)
+        # ts_rank's weights arg is real[]; a bare text literal has no matching
+        # overload, so cast the '{...}' string to real[].
+        rank = func.ts_rank(
+            cast(literal(TS_RANK_WEIGHTS), ARRAY(REAL())),
+            Knowledge.search_doc,
+            tsquery,
+        )
 
         stmt = (
             select(Knowledge, rank.label("rank"))

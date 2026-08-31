@@ -119,6 +119,50 @@ All errors follow the same envelope:
 
 ---
 
+## Web Test Endpoint
+
+A synchronous endpoint for driving the agent without WhatsApp/Telegram or any
+Meta/Razorpay setup. It runs the **same** pipeline as the webhooks (resolve
+business → customer → conversation → run the agent) but returns the reply
+directly in the HTTP response, along with which tools the agent used.
+
+```
+POST /web/chat
+```
+
+**Auth:** requires the `X-Internal-Key` header — **except in local** (`APP_ENV=local`),
+where it is disabled for convenience.
+
+**Request body**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message` | string | yes | The customer's message |
+| `user_id` | string | no | Stable id for this tester. Same id = same conversation. Defaults to `web-tester`. |
+| `business_slug` | string | no | Which tenant to talk to. Falls back to `DEFAULT_BUSINESS_SLUG`. |
+| `display_name` | string | no | Optional display name for the customer |
+
+**Success response — `200 OK`**
+
+```json
+{
+  "reply": "Hi! Yes, we have GTA 5 Premium Edition for PC, it costs INR 299.00.",
+  "business_slug": "default",
+  "conversation_id": "a65b6df5-b7c6-4ffd-bc2b-aee5c1ac6473",
+  "customer_id": "64a169a0-18cd-4921-80db-f98d9feb7ad8",
+  "conversation_state": "NEW",
+  "tools_used": [
+    { "tool": "search_products", "arguments": { "query": "GTA 5" } }
+  ]
+}
+```
+
+`tools_used` lists the actions the agent took this turn — useful for verifying
+behaviour. The reply is produced by whichever provider `LLM_PROVIDER` selects
+(Claude or Gemini).
+
+---
+
 ## Webhook Endpoints
 
 Webhook routes are **public** (no API key). Each verifies the provider signature and returns `200` immediately. All actual processing happens in a background task so slow agent turns never cause provider retries.
@@ -991,6 +1035,12 @@ Liveness probe. Does **not** hit the database — safe to call at high frequency
 ---
 
 ## Quick Reference
+
+### Web (test)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/web/chat` | `X-Internal-Key` (open in local) | Drive the agent synchronously; returns the reply + tools used |
 
 ### Webhooks
 

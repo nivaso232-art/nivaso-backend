@@ -42,7 +42,16 @@ from app.services.conversation_service import ConversationService
 
 log = structlog.get_logger(__name__)
 
-_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+_client = anthropic.AsyncAnthropic(
+    api_key=settings.anthropic_api_key,
+    # A Personal / identity-linked key must name the workspace each request acts
+    # in; a normal Workspace key does not (leave ANTHROPIC_WORKSPACE_ID blank).
+    default_headers=(
+        {"anthropic-workspace-id": settings.anthropic_workspace_id}
+        if settings.anthropic_workspace_id
+        else None
+    ),
+)
 
 _EFFORT_BUDGET: dict[str, int] = {
     "high": 2_000,

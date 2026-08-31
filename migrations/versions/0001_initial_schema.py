@@ -110,9 +110,13 @@ PRODUCT_SEARCH_DOC = """
     setweight(to_tsvector('english', coalesce(description, '')), 'C')
 """
 
+# NOTE: array_to_string() is only STABLE, but a STORED generated column requires
+# an IMMUTABLE expression. nivaso_array_to_text (created in upgrade()) is an
+# IMMUTABLE SQL wrapper — safe because folding an array with a constant
+# delimiter is deterministic. keywords is varchar[]; cast to text[] to match.
 KNOWLEDGE_SEARCH_DOC = """
     setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(array_to_string(keywords, ' '), '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(nivaso_array_to_text(keywords::text[]), '')), 'B') ||
     setweight(to_tsvector('english', coalesce(content, '')), 'C')
 """
 
@@ -151,6 +155,14 @@ def upgrade() -> None:
     bind = op.get_bind()
     for name, values in ENUMS.items():
         postgresql.ENUM(*values, name=name).create(bind, checkfirst=True)
+
+    # IMMUTABLE wrapper so knowledge.search_doc (a STORED generated column) can
+    # fold the keywords array — array_to_string() itself is only STABLE.
+    op.execute(
+        "CREATE OR REPLACE FUNCTION nivaso_array_to_text(text[]) "
+        "RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE "
+        "AS $$ SELECT array_to_string($1, ' ') $$"
+    )
 
     # ---------------------------------------------------------------- businesses
     op.create_table(

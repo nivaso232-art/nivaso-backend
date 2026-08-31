@@ -122,7 +122,9 @@ Everything related to the Claude AI agent.
 | `prompts.py` | Builds the system prompt. Split into a **stable cached half** (business info, rules — survives between turns) and a **volatile half** (current order, conversation state — injected per turn so it doesn't bust the cache). |
 | `context.py` | `ToolContext` — the object passed to every tool handler. Holds `business`, `customer`, `conversation` and lazily creates services. The AI has no way to change these — they come from the verified webhook, not from model input. |
 | `registry.py` | The fixed, ordered list of all 9 tools exposed to the AI. Order is stable (not a set) to keep the cached prefix byte-identical between requests. |
-| `runner.py` | `AgentRunner.run()` — the conversation loop. Calls Anthropic API → executes tool calls → records tool_call/result rows → loops until `end_turn` → writes the final reply and an `AgentRun` metrics row. |
+| `runner.py` | `AgentRunner.run()` — the **Claude** conversation loop. Calls Anthropic API → executes tool calls → records tool_call/result rows → loops until `end_turn` → writes the final reply and an `AgentRun` metrics row. |
+| `gemini_runner.py` | `GeminiAgentRunner.run()` — the **Gemini** equivalent (Google `google-genai`). Same tool loop, audit rows, and `AgentRun` metrics; converts the tool JSON-schemas to Gemini function declarations and the message log to Gemini `contents`. |
+| `factory.py` | `build_agent_runner(ctx)` — returns the Claude or Gemini runner based on `LLM_PROVIDER`. Lazy imports so only the active provider's SDK is required. |
 | `tools/base.py` | `ToolSpec` dataclass (name + description + JSON schema + handler). Helpers for building strict schemas. |
 | `tools/catalog.py` | `search_products`, `get_product` — product discovery tools. |
 | `tools/orders.py` | `create_order`, `get_order_status`, `cancel_order` — order lifecycle tools. |
@@ -172,6 +174,11 @@ api/
 │                       #   get_session → DB session
 │                       #   require_internal_key → validates X-Internal-Key header
 │                       #   get_business(slug) → resolved Business object
+│
+├── web.py              # POST /web/chat — synchronous test endpoint. Runs the
+│                       # full agent pipeline and returns the reply (+ which
+│                       # tools ran) in the HTTP response. No WhatsApp/Meta
+│                       # setup needed. Key-protected except in local.
 │
 ├── webhooks/           # Public endpoints (no auth — use signature verification)
 │   ├── whatsapp.py     # GET (Meta verify challenge) + POST (inbound messages)

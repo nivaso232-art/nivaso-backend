@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 # merely happens to mention the word in passing.
 _KNOWLEDGE_SEARCH_DOC = """
     setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(array_to_string(keywords, ' '), '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(nivaso_array_to_text(keywords::text[]), '')), 'B') ||
     setweight(to_tsvector('english', coalesce(content, '')), 'C')
 """
 

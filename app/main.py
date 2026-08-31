@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 import structlog
 from fastapi import Depends, FastAPI
 
+from app.api import web
 from app.api.admin import businesses, customers, knowledge, products, support
 from app.api.deps import require_internal_key
 from app.api.webhooks import razorpay, telegram, whatsapp
@@ -64,6 +65,12 @@ app.include_router(products.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(support.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(customers.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(knowledge.router, prefix="/admin", dependencies=_admin_deps)
+
+# -- Web test channel --------------------------------------------------------
+# No auth in local so you can curl /web/chat directly while testing; still
+# key-protected in staging/prod (it spends tokens and touches tenant data).
+_web_deps = [] if settings.is_local else _admin_deps
+app.include_router(web.router, dependencies=_web_deps)
 
 
 @app.get("/health", tags=["ops"])
