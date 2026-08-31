@@ -163,6 +163,11 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
                 channel=Channel.WHATSAPP,
             )
 
+            # Bug fix: load history BEFORE recording the inbound message so
+            # the runner receives history + user_text as the current message,
+            # not history (which already includes it) + user_text duplicated.
+            history = await conv_svc.history(conversation)
+
             inbound = await conv_svc.record_inbound(
                 conversation=conversation,
                 content=msg.text,
@@ -186,8 +191,6 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
         summary = await knowledge_svc.index_summary()
         knowledge_titles = [a["title"] for a in summary]
 
-        history = await conv_svc.history(conversation)
-
         ctx = ToolContext(
             session=session,
             business=business,
@@ -209,13 +212,6 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
     try:
         wa_client = WhatsAppClient()
         wamid = await wa_client.send_text(to=msg.wa_id, text=reply)
-
-        async with UnitOfWork(session):
-            from app.models.enums import MessageStatus
-            await conv_svc.mark_delivery(
-                inbound,  # type: ignore[arg-type]
-                status=MessageStatus.SENT,
-            )
         log.info("whatsapp_reply_sent", to=msg.wa_id, wamid=wamid)
     except ProviderError as exc:
         log.error("whatsapp_send_failed", to=msg.wa_id, error=str(exc))

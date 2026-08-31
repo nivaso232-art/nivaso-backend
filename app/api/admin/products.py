@@ -118,8 +118,13 @@ async def get_product(
     session: AsyncSession = Depends(get_session),
 ) -> ProductOut:
     import uuid
+    from app.core.errors import ValidationError
+    try:
+        pid = uuid.UUID(product_id)
+    except ValueError:
+        raise ValidationError("product_id must be a valid UUID.", details={"product_id": product_id})
     repo = ProductRepository(session, business.id)
-    product = await repo.get_or_raise(uuid.UUID(product_id))
+    product = await repo.get_or_raise(pid)
     return ProductOut.from_orm(product)
 
 
@@ -132,8 +137,13 @@ async def update_product(
     session: AsyncSession = Depends(get_session),
 ) -> ProductOut:
     import uuid
+    from app.core.errors import ValidationError
+    try:
+        pid = uuid.UUID(product_id)
+    except ValueError:
+        raise ValidationError("product_id must be a valid UUID.", details={"product_id": product_id})
     repo = ProductRepository(session, business.id)
-    product = await repo.get_or_raise(uuid.UUID(product_id))
+    product = await repo.get_or_raise(pid)
 
     async with UnitOfWork(session):
         if body.name is not None:
@@ -165,7 +175,12 @@ async def archive_product(
 ) -> None:
     """Archive a product (soft delete). Order history referencing it is preserved."""
     import uuid
+    from app.core.errors import ValidationError
+    try:
+        pid = uuid.UUID(product_id)
+    except ValueError:
+        raise ValidationError("product_id must be a valid UUID.", details={"product_id": product_id})
     repo = ProductRepository(session, business.id)
-    product = await repo.get_or_raise(uuid.UUID(product_id))
+    product = await repo.get_or_raise(pid)
     async with UnitOfWork(session):
         product.status = ProductStatus.ARCHIVED

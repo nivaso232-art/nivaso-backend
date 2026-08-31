@@ -51,6 +51,11 @@ async def get_customer(
     session: AsyncSession = Depends(get_session),
 ) -> CustomerOut:
     import uuid
+    from app.core.errors import ValidationError
+    try:
+        cid = uuid.UUID(customer_id)
+    except ValueError:
+        raise ValidationError("customer_id must be a valid UUID.", details={"customer_id": customer_id})
     repo = CustomerRepository(session, business.id)
-    customer = await repo.get_or_raise(uuid.UUID(customer_id))
+    customer = await repo.get_or_raise(cid)
     return CustomerOut.from_orm(customer)

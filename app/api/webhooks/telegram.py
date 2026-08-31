@@ -123,6 +123,10 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
                 channel=Channel.TELEGRAM,
             )
 
+            # Load history before recording so the runner gets history + user_text
+            # as the current message, not both from history and as a duplicate append.
+            history = await conv_svc.history(conversation)
+
             inbound = await conv_svc.record_inbound(
                 conversation=conversation,
                 content=msg.text,
@@ -143,8 +147,6 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
         categories = await catalog_svc.list_categories()
         summary = await knowledge_svc.index_summary()
         knowledge_titles = [a["title"] for a in summary]
-
-        history = await conv_svc.history(conversation)
 
         ctx = ToolContext(
             session=session,

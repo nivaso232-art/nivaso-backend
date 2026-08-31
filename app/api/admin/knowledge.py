@@ -99,8 +99,13 @@ async def get_article(
     session: AsyncSession = Depends(get_session),
 ) -> KnowledgeOut:
     import uuid
+    from app.core.errors import ValidationError
+    try:
+        aid = uuid.UUID(article_id)
+    except ValueError:
+        raise ValidationError("article_id must be a valid UUID.", details={"article_id": article_id})
     repo = KnowledgeRepository(session, business.id)
-    article = await repo.get(uuid.UUID(article_id))
+    article = await repo.get(aid)
     if article is None:
         raise NotFoundError("Article not found.", details={"id": article_id})
     return KnowledgeOut.from_orm(article)
@@ -115,8 +120,13 @@ async def update_article(
     session: AsyncSession = Depends(get_session),
 ) -> KnowledgeOut:
     import uuid
+    from app.core.errors import ValidationError
+    try:
+        aid = uuid.UUID(article_id)
+    except ValueError:
+        raise ValidationError("article_id must be a valid UUID.", details={"article_id": article_id})
     repo = KnowledgeRepository(session, business.id)
-    article = await repo.get(uuid.UUID(article_id))
+    article = await repo.get(aid)
     if article is None:
         raise NotFoundError("Article not found.", details={"id": article_id})
 
@@ -143,8 +153,13 @@ async def delete_article(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     import uuid
+    from app.core.errors import ValidationError
+    try:
+        aid = uuid.UUID(article_id)
+    except ValueError:
+        raise ValidationError("article_id must be a valid UUID.", details={"article_id": article_id})
     repo = KnowledgeRepository(session, business.id)
-    article = await repo.get(uuid.UUID(article_id))
+    article = await repo.get(aid)
     if article is None:
         raise NotFoundError("Article not found.", details={"id": article_id})
     async with UnitOfWork(session):
