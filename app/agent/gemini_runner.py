@@ -201,8 +201,9 @@ def _history_to_contents(messages: Sequence[Message]) -> list[types.Content]:
 class GeminiAgentRunner:
     """Drives a single agent turn on Gemini: call the model, execute tools, reply."""
 
-    def __init__(self, ctx: ToolContext) -> None:
+    def __init__(self, ctx: ToolContext, *, model: str | None = None) -> None:
         self.ctx = ctx
+        self.model = model or settings.gemini_model
 
     async def run(
         self,
@@ -263,7 +264,7 @@ class GeminiAgentRunner:
                     iterations += 1
 
                     response = await _client.aio.models.generate_content(
-                        model=settings.gemini_model,
+                        model=self.model,
                         contents=contents,
                         config=config,
                     )

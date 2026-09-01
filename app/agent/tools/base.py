@@ -28,6 +28,45 @@ from app.agent.context import ToolContext
 ToolHandler = Callable[..., Awaitable[Any]]
 
 
+_ANTHROPIC_UNSUPPORTED = frozenset({
+    "minimum", "maximum",
+    "minItems", "maxItems",
+    "minLength", "maxLength",
+    "minProperties", "maxProperties",
+    "multipleOf",
+})
+
+
+def _strip_for_anthropic(node: dict[str, Any]) -> dict[str, Any]:
+    """Recursively clean a JSON Schema node for Anthropic's tool-use validator.
+
+    Anthropic supports a strict subset of JSON Schema:
+    - minimum/maximum (numeric), minItems/maxItems (array) → removed
+    - type: ["X", "null"] → flattened to type: "X" (strict mode rejects array
+      types on enum fields, and null is represented by the field being omitted)
+    - null entries in enum lists → removed
+    """
+    result = {k: v for k, v in node.items() if k not in _ANTHROPIC_UNSUPPORTED}
+
+    # Flatten ["string", "null"] → "string" so Anthropic strict mode accepts it
+    if "type" in result and isinstance(result["type"], list):
+        non_null = [t for t in result["type"] if t != "null"]
+        result["type"] = non_null[0] if non_null else "string"
+
+    # Drop null sentinel from enum values
+    if "enum" in result and isinstance(result["enum"], list):
+        result["enum"] = [v for v in result["enum"] if v is not None]
+
+    if "properties" in result:
+        result["properties"] = {
+            k: _strip_for_anthropic(v)
+            for k, v in result["properties"].items()
+        }
+    if "items" in result and isinstance(result["items"], dict):
+        result["items"] = _strip_for_anthropic(result["items"])
+    return result
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
@@ -41,12 +80,16 @@ class ToolSpec:
         Key order is fixed so the serialised tool list is byte-identical
         between requests - the tool block is part of the cached prefix, and a
         reordered dict silently invalidates the whole cache.
+
+        ``minimum``/``maximum`` are stripped because Anthropic rejects them on
+        integer properties (Gemini accepts them; they stay in ``input_schema``
+        for the Gemini runner).
         """
         return {
             "name": self.name,
             "description": self.description,
             "strict": True,
-            "input_schema": self.input_schema,
+            "input_schema": _strip_for_anthropic(self.input_schema),
         }
 
     async def execute(self, ctx: ToolContext, arguments: dict[str, Any]) -> Any:

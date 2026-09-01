@@ -33,8 +33,10 @@ from app.api.deps import get_session
 from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.uow import UnitOfWork
-from app.models.enums import Channel, MessageType
+from app.models.enums import Channel, MessageType, SenderType
 from app.repositories.businesses import BusinessRepository
+from app.repositories.conversations import ConversationRepository, MessageRepository
+from app.repositories.customers import CustomerChannelRepository
 from app.services.catalog_service import CatalogService
 from app.services.conversation_service import ConversationService
 from app.services.customer_service import CustomerService
@@ -56,6 +58,14 @@ class ChatRequest(BaseModel):
         description="Which tenant to talk to. Falls back to DEFAULT_BUSINESS_SLUG.",
     )
     display_name: str | None = Field(default=None)
+    provider: str | None = Field(
+        default=None,
+        description="Override LLM provider: 'anthropic' or 'gemini'.",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Override the model ID (e.g. 'claude-sonnet-4-6', 'gemini-2.5-flash').",
+    )
 
 
 class ToolCall(BaseModel):
@@ -70,6 +80,12 @@ class ChatResponse(BaseModel):
     customer_id: str
     conversation_state: str
     tools_used: list[ToolCall]
+    model_used: str
+
+
+class HistoryMessage(BaseModel):
+    role: str
+    content: str
 
 
 def _trailing_tool_calls(history: Any, after_message_id: Any) -> list[ToolCall]:
@@ -136,10 +152,16 @@ async def chat(
             message_type=MessageType.TEXT,
         )
 
-    catalog_svc = CatalogService(session, business.id)
-    knowledge_svc = KnowledgeService(session, business.id)
-    categories = await catalog_svc.list_categories()
-    summary = await knowledge_svc.index_summary()
+        # Read catalog + knowledge INSIDE this UnitOfWork so no SQL fires
+        # after the commit. Any SELECT after the commit triggers SQLAlchemy's
+        # autobegin, which opens a hidden transaction; the runner's UnitOfWork
+        # then sees in_transaction()=True, becomes a no-op passthrough, and
+        # nobody commits the assistant reply. Keeping reads here avoids that.
+        catalog_svc = CatalogService(session, business.id)
+        knowledge_svc = KnowledgeService(session, business.id)
+        categories = await catalog_svc.list_categories()
+        summary = await knowledge_svc.index_summary()
+
     knowledge_titles = [a["title"] for a in summary]
 
     ctx = ToolContext(
@@ -148,12 +170,14 @@ async def chat(
         customer=customer,
         conversation=conversation,
     )
-    reply = await build_agent_runner(ctx).run(
+    runner = build_agent_runner(ctx, provider=body.provider, model=body.model)
+    reply = await runner.run(
         history=history,
         user_text=body.message,
         categories=categories,
         knowledge_titles=knowledge_titles,
     )
+    model_used = runner.model
 
     # Re-read to surface which tools ran this turn (test visibility only).
     after_history = await conv_svc.history(conversation)
@@ -175,4 +199,48 @@ async def chat(
         customer_id=str(customer.id),
         conversation_state=conversation.current_state,
         tools_used=tools_used,
+        model_used=model_used,
     )
+
+
+@router.get("/history", response_model=list[HistoryMessage])
+async def get_history(
+    user_id: str = "web-tester",
+    business_slug: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[HistoryMessage]:
+    """Return the TEXT messages for this user's active conversation."""
+    slug = business_slug or settings.default_business_slug
+    if not slug:
+        return []
+
+    try:
+        business = await BusinessRepository(session).get_active_or_raise(slug)
+    except NotFoundError:
+        return []
+
+    channel_repo = CustomerChannelRepository(session, business.id)
+    channel_row = await channel_repo.get_by_external_id(
+        channel=Channel.WEB, external_user_id=user_id
+    )
+    if channel_row is None:
+        return []
+
+    conversation = await ConversationRepository(session, business.id).get_active_for_channel(
+        channel_row.id
+    )
+    if conversation is None:
+        return []
+
+    messages = await MessageRepository(session, business.id).list_for_conversation(
+        conversation.id, limit=100, include_tool_traffic=False
+    )
+
+    return [
+        HistoryMessage(
+            role="user" if msg.sender_type == SenderType.CUSTOMER else "assistant",
+            content=msg.content or "",
+        )
+        for msg in messages
+        if msg.message_type == MessageType.TEXT and msg.content
+    ]

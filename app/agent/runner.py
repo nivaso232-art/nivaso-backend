@@ -25,7 +25,10 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
+import ssl
+
 import anthropic
+import httpx2
 import structlog
 
 from app.agent.context import ToolContext
@@ -42,8 +45,15 @@ from app.services.conversation_service import ConversationService
 
 log = structlog.get_logger(__name__)
 
+# Use the system certificate store so the Anthropic SDK works behind corporate
+# SSL-inspection proxies (e.g. Cognizant's network). The Anthropic SDK bundles
+# httpx2; passing an explicit AsyncClient with verify=ssl.create_default_context()
+# picks up whatever CAs the OS/pip-system-certs has already added.
+_http_client = httpx2.AsyncClient(verify=ssl.create_default_context())
+
 _client = anthropic.AsyncAnthropic(
     api_key=settings.anthropic_api_key,
+    http_client=_http_client,
     # A Personal / identity-linked key must name the workspace each request acts
     # in; a normal Workspace key does not (leave ANTHROPIC_WORKSPACE_ID blank).
     default_headers=(
@@ -157,8 +167,9 @@ def _history_to_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
 class AgentRunner:
     """Drives a single agent turn: call the LLM, execute tools, return the reply."""
 
-    def __init__(self, ctx: ToolContext) -> None:
+    def __init__(self, ctx: ToolContext, *, model: str | None = None) -> None:
         self.ctx = ctx
+        self.model = model or settings.agent_model
 
     async def run(
         self,
@@ -227,7 +238,7 @@ class AgentRunner:
                     iterations += 1
 
                     response = await _client.messages.create(
-                        model=settings.agent_model,
+                        model=self.model,
                         max_tokens=settings.agent_max_tokens,
                         system=system,
                         tools=api_tools(),
@@ -339,7 +350,7 @@ class AgentRunner:
                 latency_ms = int((time.monotonic() - started_at) * 1000)
                 run = AgentRun(
                     conversation_id=self.ctx.conversation_id,
-                    model=settings.agent_model,
+                    model=self.model,
                     effort=settings.agent_effort,
                     input_tokens=total_input,
                     output_tokens=total_output,
