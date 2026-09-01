@@ -37,6 +37,7 @@ from google.genai import types
 from app.agent.context import ToolContext
 from app.agent.prompts import build_cached_system, build_turn_context
 from app.agent.registry import TOOLS, TOOLS_BY_NAME
+from app.agent.tools.base import ToolSpec
 from app.core.config import settings
 from app.core.errors import AgentError
 from app.core.uow import UnitOfWork
@@ -201,9 +202,21 @@ def _history_to_contents(messages: Sequence[Message]) -> list[types.Content]:
 class GeminiAgentRunner:
     """Drives a single agent turn on Gemini: call the model, execute tools, reply."""
 
-    def __init__(self, ctx: ToolContext, *, model: str | None = None) -> None:
+    def __init__(
+        self,
+        ctx: ToolContext,
+        *,
+        model: str | None = None,
+        extra_tools: Sequence[ToolSpec] = (),
+    ) -> None:
         self.ctx = ctx
         self.model = model or settings.gemini_model
+        self.extra_tools = extra_tools
+        self.admin_mode = bool(extra_tools)
+        self._tools_by_name = {
+            **TOOLS_BY_NAME,
+            **{t.name: t for t in extra_tools},
+        }
 
     async def run(
         self,
@@ -232,6 +245,7 @@ class GeminiAgentRunner:
         turn_ctx = build_turn_context(
             customer=self.ctx.customer,
             conversation=self.ctx.conversation,
+            admin_mode=self.admin_mode,
         )
 
         contents = _history_to_contents(history)
@@ -246,7 +260,16 @@ class GeminiAgentRunner:
 
         config = types.GenerateContentConfig(
             system_instruction=system_text,
-            tools=[types.Tool(function_declarations=_function_declarations())],
+            tools=[types.Tool(
+                function_declarations=_function_declarations() + [
+                    types.FunctionDeclaration(
+                        name=t.name,
+                        description=t.description,
+                        parameters=_to_gemini_schema(t.input_schema),
+                    )
+                    for t in self.extra_tools
+                ]
+            )],
             # We run tools ourselves (to log them and inject ToolContext), so keep
             # the SDK from trying to auto-execute anything.
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
@@ -327,7 +350,7 @@ class GeminiAgentRunner:
 
                         is_error = False
                         result: Any
-                        spec = TOOLS_BY_NAME.get(tool_name)
+                        spec = self._tools_by_name.get(tool_name)
                         if spec is None:
                             is_error = True
                             result = f"Unknown tool: {tool_name}"

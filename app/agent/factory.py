@@ -20,13 +20,19 @@ def build_agent_runner(
     *,
     provider: str | None = None,
     model: str | None = None,
+    admin_mode: bool = False,
 ) -> Any:
+    extra_tools: Any = ()
+    if admin_mode:
+        from app.agent.tools.admin_knowledge import ADMIN_TOOLS
+        extra_tools = ADMIN_TOOLS
+
     effective_provider = provider or settings.llm_provider
     if effective_provider == "gemini":
         from app.agent.gemini_runner import GeminiAgentRunner
 
-        return GeminiAgentRunner(ctx, model=model)
+        return GeminiAgentRunner(ctx, model=model, extra_tools=extra_tools)
 
     from app.agent.runner import AgentRunner
 
-    return AgentRunner(ctx, model=model)
+    return AgentRunner(ctx, model=model, extra_tools=extra_tools)

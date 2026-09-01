@@ -36,6 +36,12 @@ async def create_payment_link(
 
     The amount is read from the order, which was itself priced from the
     catalog. No amount parameter exists on this tool.
+
+    Returns a success dict with payment_url, or an error dict with
+    retry_possible so the model knows whether to apologise-and-retry or
+    escalate to a human. Returning an error dict (rather than raising)
+    keeps is_error=False, which prevents the model from immediately
+    creating a support ticket for transient provider issues.
     """
     order = await ctx.orders.resolve_order(
         customer_id=ctx.customer_id,
@@ -48,8 +54,8 @@ async def create_payment_link(
         link = mock_payment_link(slug=ctx.business.slug, reference=order.reference)
         provider = PaymentProvider.MANUAL
     else:
-        client = RazorpayClient()
         try:
+            client = RazorpayClient()
             link = await client.create_payment_link(
                 amount_minor=order.total_in_minor_units(),
                 currency=order.currency,
@@ -59,8 +65,6 @@ async def create_payment_link(
                 customer_phone=ctx.customer.phone,
             )
         except ProviderError:
-            # Surfaced to the model as a tool error so it can apologise and offer
-            # to retry, rather than inventing a link.
             log.exception("payment_link_failed", reference=order.reference)
             raise
         provider = PaymentProvider.RAZORPAY

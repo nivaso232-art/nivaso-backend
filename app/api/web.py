@@ -70,6 +70,13 @@ class ChatRequest(BaseModel):
         default=None,
         description="Override the model ID (e.g. 'claude-sonnet-4-6', 'gemini-2.5-flash').",
     )
+    admin_mode: bool = Field(
+        default=False,
+        description=(
+            "Unlock admin-only tools (knowledge base create/update/list). "
+            "Only accepted from requests that already have the X-Internal-Key header."
+        ),
+    )
 
 
 class ToolCall(BaseModel):
@@ -179,7 +186,12 @@ async def chat(
         customer=customer,
         conversation=conversation,
     )
-    runner = build_agent_runner(ctx, provider=body.provider, model=body.model)
+    runner = build_agent_runner(
+        ctx,
+        provider=body.provider,
+        model=body.model,
+        admin_mode=body.admin_mode,
+    )
     reply = await runner.run(
         history=history,
         user_text=body.message,

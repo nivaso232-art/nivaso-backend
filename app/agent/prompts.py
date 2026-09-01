@@ -136,6 +136,7 @@ def build_turn_context(
     customer: Customer,
     conversation: Conversation,
     open_order: Order | None = None,
+    admin_mode: bool = False,
 ) -> str:
     """Per-turn state, injected into the messages array.
 
@@ -150,7 +151,16 @@ def build_turn_context(
         if open_order is not None
         else "none"
     )
-    return (
+    ctx_line = (
         f"[ctx: customer={customer.display_name}, "
         f"stage={conversation.current_state}, order={order_part}]"
     )
+    if admin_mode:
+        ctx_line += (
+            "\n[ADMIN MODE: You are talking with the business admin — not a customer. "
+            "You have three extra tools: list_knowledge_articles, create_knowledge_article, "
+            "update_knowledge_article. Always draft content and confirm with the admin "
+            "before saving. Default to status='draft' unless explicitly told to publish. "
+            "You can also answer questions about the business, products, and orders.]"
+        )
+    return ctx_line

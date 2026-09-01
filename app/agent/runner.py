@@ -34,6 +34,7 @@ import structlog
 from app.agent.context import ToolContext
 from app.agent.prompts import build_cached_system, build_turn_context
 from app.agent.registry import TOOLS_BY_NAME, api_tools
+from app.agent.tools.base import ToolSpec
 from app.core.config import settings
 from app.core.errors import AgentError
 from app.core.uow import UnitOfWork
@@ -187,9 +188,22 @@ def _history_to_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
 class AgentRunner:
     """Drives a single agent turn: call the LLM, execute tools, return the reply."""
 
-    def __init__(self, ctx: ToolContext, *, model: str | None = None) -> None:
+    def __init__(
+        self,
+        ctx: ToolContext,
+        *,
+        model: str | None = None,
+        extra_tools: Sequence[ToolSpec] = (),
+    ) -> None:
         self.ctx = ctx
         self.model = model or settings.agent_model
+        self.extra_tools = extra_tools
+        self.admin_mode = bool(extra_tools)
+        # Merge base tools with any caller-supplied extras (e.g. admin tools).
+        self._tools_by_name = {
+            **TOOLS_BY_NAME,
+            **{t.name: t for t in extra_tools},
+        }
 
     async def run(
         self,
@@ -223,6 +237,7 @@ class AgentRunner:
         turn_ctx = build_turn_context(
             customer=self.ctx.customer,
             conversation=self.ctx.conversation,
+            admin_mode=self.admin_mode,
         )
 
         # Volatile turn context is injected as the first user/assistant exchange
@@ -261,11 +276,14 @@ class AgentRunner:
                 while iterations < settings.agent_max_iterations:
                     iterations += 1
 
+                    all_tools = api_tools() + [
+                        t.to_api_tool() for t in self.extra_tools
+                    ]
                     response = await _client.messages.create(
                         model=self.model,
                         max_tokens=settings.agent_max_tokens,
                         system=system,
-                        tools=api_tools(),
+                        tools=all_tools,
                         messages=api_messages,
                         thinking=thinking_param,
                     )
@@ -328,7 +346,7 @@ class AgentRunner:
 
                         is_error = False
                         result: Any = None
-                        spec = TOOLS_BY_NAME.get(tool_name)
+                        spec = self._tools_by_name.get(tool_name)
                         if spec is None:
                             is_error = True
                             result = f"Unknown tool: {tool_name}"

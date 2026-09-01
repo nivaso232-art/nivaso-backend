@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # Fernet.generate_key(). Without it, credential delivery cannot run.
     credential_enc_key: str = ""
     agent_effort: AgentEffort = "low"
-    agent_max_tokens: int = 512   # chat replies: 50-150 tok; tool calls: 20-80 tok
+    agent_max_tokens: int = 1024  # 512 was truncating tool-call reasoning mid-stream
     agent_max_iterations: int = 5  # purchase flow rarely needs more than 4 tool hops
 
     # -- WhatsApp ---------------------------------------------------------
