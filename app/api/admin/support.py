@@ -47,21 +47,27 @@ class TicketOut(BaseModel):
 class UpdateTicketIn(BaseModel):
     assigned_to: str | None = None
     status: TicketStatus | None = None
+    priority: TicketPriority | None = None
     resolution: str | None = None
 
 
 # -- routes -------------------------------------------------------------------
 
 @router.get("", response_model=list[TicketOut])
-async def list_open_tickets(
+async def list_tickets(
     slug: str,
     priority: TicketPriority | None = None,
+    status: TicketStatus | None = None,
     limit: int = 100,
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> list[TicketOut]:
     repo = SupportTicketRepository(session, business.id)
-    tickets = await repo.list_open(priority=priority, limit=limit)
+    if status is not None:
+        tickets = await repo.list(limit=limit, order_by=SupportTicket.created_at.desc())
+        tickets = [t for t in tickets if t.status == status]
+    else:
+        tickets = await repo.list_open(priority=priority, limit=limit)
     return [TicketOut.from_orm(t) for t in tickets]
 
 
@@ -96,6 +102,8 @@ async def update_ticket(
     async with UnitOfWork(session):
         if body.assigned_to is not None:
             await svc.assign(ticket, agent=body.assigned_to)
+        if body.priority is not None:
+            ticket.priority = body.priority
         if body.status is TicketStatus.RESOLVED:
             await svc.resolve(ticket, resolution=body.resolution)
         elif body.status is not None:

@@ -18,7 +18,18 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import web
-from app.api.admin import businesses, customers, knowledge, metrics, products, support
+from app.api.admin import (
+    agent_runs,
+    businesses,
+    customers,
+    fulfillments,
+    knowledge,
+    metrics,
+    orders,
+    products,
+    support,
+    webhook_events,
+)
 from app.api.deps import require_internal_key
 from app.api.webhooks import razorpay, telegram, whatsapp
 from app.core.config import settings
@@ -80,6 +91,10 @@ app.include_router(products.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(support.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(customers.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(knowledge.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(orders.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(fulfillments.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(webhook_events.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(agent_runs.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(metrics.router, prefix="/admin", dependencies=_admin_deps)
 
 # -- Web test channel --------------------------------------------------------
