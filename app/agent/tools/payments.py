@@ -25,6 +25,7 @@ from app.core.ids import normalize_reference
 from app.models.enums import ConversationState, OrderStatus, PaymentProvider
 from app.providers.mock_payments import mock_payment_link
 from app.providers.razorpay.client import RazorpayClient
+from app.services.reconcile import reconcile_and_deliver
 
 log = structlog.get_logger(__name__)
 
@@ -105,6 +106,22 @@ async def check_payment_status(
         customer_id=ctx.customer_id,
         reference=normalize_reference(order_reference) if order_reference else None,
     )
+
+    # Reconcile with Razorpay before reporting. A real payment can be made
+    # without us receiving a webhook (no public URL in dev, a missed delivery in
+    # prod). Polling the provider is authoritative — Razorpay confirming, not the
+    # customer's word — so it is safe to settle (and deliver) the order here.
+    if not order.is_paid and not settings.payments_mock:
+        try:
+            settled = await reconcile_and_deliver(ctx.session, ctx.business_id, order)
+            if settled.paid:
+                order = await ctx.orders.resolve_order(
+                    customer_id=ctx.customer_id, reference=order.reference
+                )
+        except Exception as exc:  # never let reconciliation break the status read
+            log.warning(
+                "payment_reconcile_failed", reference=order.reference, error=str(exc)
+            )
 
     attempts = await ctx.payments.payments.list_for_order(order.id)
     successful = await ctx.payments.payments.get_successful_for_order(order.id)

@@ -34,6 +34,20 @@ class PaymentLinkResult:
     short_url: str  # the URL we send to the customer
 
 
+@dataclass(frozen=True)
+class PaymentLinkStatus:
+    """A payment link's current state, polled from Razorpay (not a webhook)."""
+
+    status: str              # "created" | "paid" | "cancelled" | "expired" ...
+    provider_payment_id: str  # the captured payment id, when paid
+    amount_paid_minor: int
+    currency: str
+
+    @property
+    def is_paid(self) -> bool:
+        return self.status == "paid"
+
+
 class RazorpayClient:
     """Thin async wrapper around the Razorpay Payment Links API."""
 
@@ -103,6 +117,45 @@ class RazorpayClient:
         return PaymentLinkResult(
             link_id=data["id"],
             short_url=data["short_url"],
+        )
+
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    async def fetch_payment_link(self, link_id: str) -> PaymentLinkStatus:
+        """Poll a payment link's status directly from Razorpay.
+
+        The reconciliation counterpart to the webhook: when Razorpay never
+        delivered (or we can't receive) a webhook, we ask the provider whether
+        the link was paid. An authenticated API response is as authoritative as
+        a signed webhook — both are the provider speaking, not the customer.
+        """
+        async with httpx.AsyncClient(auth=self._auth, timeout=30) as client:
+            try:
+                resp = await client.get(f"{_BASE}/payment_links/{link_id}")
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise ProviderError(
+                    f"Razorpay payment link lookup failed: {exc.response.text}",
+                    details={"status_code": exc.response.status_code},
+                ) from exc
+            except httpx.RequestError as exc:
+                raise ProviderError(f"Razorpay request failed: {exc}") from exc
+
+        data = resp.json()
+        payments = data.get("payments") or []
+        captured = next(
+            (p for p in payments if p.get("status") == "captured"),
+            payments[0] if payments else None,
+        )
+        return PaymentLinkStatus(
+            status=data.get("status", ""),
+            provider_payment_id=(captured or {}).get("payment_id", ""),
+            amount_paid_minor=int(data.get("amount_paid", 0) or 0),
+            currency=data.get("currency", "INR"),
         )
 
 
