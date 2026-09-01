@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # -- Gemini (Google AI Studio) ----------------------------------------
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.6-flash"
+    gemini_model: str = "gemini-3.5-flash-lite"
 
     # -- Credential vault -------------------------------------------------
     # Fernet key used to encrypt game-account secrets at rest. Generate with
@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""
     razorpay_webhook_secret: str = ""
+
+    # -- Mock payments ----------------------------------------------------
+    # When true, the agent issues a mock payment link (no Razorpay call), and
+    # opening that link completes the payment and triggers real delivery. Use
+    # while Razorpay is unavailable (e.g. pending KYC). Never enable in prod.
+    payments_mock: bool = False
+    # Base URL the mock link points at (must be reachable by whoever opens it).
+    public_base_url: str = "http://localhost:8000"
 
     # -- Multi-tenant routing --------------------------------------------
     # For single-business deployments: the slug of the business that all

@@ -19,9 +19,11 @@ import structlog
 
 from app.agent.context import ToolContext
 from app.agent.tools.base import ToolSpec, schema, string_prop
+from app.core.config import settings
 from app.core.errors import ProviderError
 from app.core.ids import normalize_reference
-from app.models.enums import ConversationState, OrderStatus
+from app.models.enums import ConversationState, OrderStatus, PaymentProvider
+from app.providers.mock_payments import mock_payment_link
 from app.providers.razorpay.client import RazorpayClient
 
 log = structlog.get_logger(__name__)
@@ -40,24 +42,32 @@ async def create_payment_link(
         reference=normalize_reference(order_reference),
     )
 
-    client = RazorpayClient()
-    try:
-        link = await client.create_payment_link(
-            amount_minor=order.total_in_minor_units(),
-            currency=order.currency,
-            reference=order.reference,
-            description=f"Order {order.reference}",
-            customer_name=ctx.customer.display_name,
-            customer_phone=ctx.customer.phone,
-        )
-    except ProviderError:
-        # Surfaced to the model as a tool error so it can apologise and offer
-        # to retry, rather than inventing a link.
-        log.exception("payment_link_failed", reference=order.reference)
-        raise
+    if settings.payments_mock:
+        # Razorpay unavailable (e.g. pending KYC): issue a mock link that
+        # completes the payment when opened. Same downstream flow, no real money.
+        link = mock_payment_link(slug=ctx.business.slug, reference=order.reference)
+        provider = PaymentProvider.MANUAL
+    else:
+        client = RazorpayClient()
+        try:
+            link = await client.create_payment_link(
+                amount_minor=order.total_in_minor_units(),
+                currency=order.currency,
+                reference=order.reference,
+                description=f"Order {order.reference}",
+                customer_name=ctx.customer.display_name,
+                customer_phone=ctx.customer.phone,
+            )
+        except ProviderError:
+            # Surfaced to the model as a tool error so it can apologise and offer
+            # to retry, rather than inventing a link.
+            log.exception("payment_link_failed", reference=order.reference)
+            raise
+        provider = PaymentProvider.RAZORPAY
 
     payment = await ctx.payments.create_attempt(
         order=order,
+        provider=provider,
         provider_payment_link_id=link.link_id,
         payment_url=link.short_url,
     )

@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator
 import structlog
 from fastapi import Depends, FastAPI
 
-from app.api import web
+from app.api import mock_payments, web
 from app.api.admin import businesses, credentials, customers, knowledge, products, support
 from app.api.deps import require_internal_key
 from app.api.webhooks import razorpay, telegram, whatsapp
@@ -56,6 +56,9 @@ register_exception_handlers(app)
 app.include_router(whatsapp.router)
 app.include_router(telegram.router)
 app.include_router(razorpay.router)
+
+# -- Mock payment page (public; self-guards on PAYMENTS_MOCK) -----------------
+app.include_router(mock_payments.router)
 
 # -- Admin routes (internal only, require X-Internal-Key) --------------------
 _admin_deps = [Depends(require_internal_key)]
