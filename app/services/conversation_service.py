@@ -34,7 +34,7 @@ log = structlog.get_logger(__name__)
 # How much history to replay into the model. Tool traffic is included because
 # the model needs to see what it already looked up - without it, it re-runs
 # the same search every turn.
-DEFAULT_HISTORY_LIMIT = 40
+DEFAULT_HISTORY_LIMIT = 20  # ~6-8 real exchanges including tool traffic
 
 
 class ConversationService:

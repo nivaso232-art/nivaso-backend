@@ -15,12 +15,18 @@ from app.agent.context import ToolContext
 from app.core.config import settings
 
 
-def build_agent_runner(ctx: ToolContext) -> Any:
-    if settings.llm_provider == "gemini":
+def build_agent_runner(
+    ctx: ToolContext,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> Any:
+    effective_provider = provider or settings.llm_provider
+    if effective_provider == "gemini":
         from app.agent.gemini_runner import GeminiAgentRunner
 
-        return GeminiAgentRunner(ctx)
+        return GeminiAgentRunner(ctx, model=model)
 
     from app.agent.runner import AgentRunner
 
-    return AgentRunner(ctx)
+    return AgentRunner(ctx, model=model)

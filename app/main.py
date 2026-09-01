@@ -10,14 +10,27 @@ on shutdown. Both are cheap enough to do synchronously inside the event loop.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import mock_payments, web
-from app.api.admin import businesses, credentials, customers, knowledge, products, support
+from app.api.admin import (
+    agent_runs,
+    businesses,
+    credentials,
+    customers,
+    fulfillments,
+    knowledge,
+    metrics,
+    orders,
+    products,
+    support,
+    webhook_events,
+)
 from app.api.deps import require_internal_key
 from app.api.webhooks import razorpay, telegram, whatsapp
 from app.core.config import settings
@@ -52,6 +65,20 @@ app = FastAPI(
 
 register_exception_handlers(app)
 
+# -- CORS (allow the admin frontend in local dev) ----------------------------
+_cors_origins = (
+    ["http://localhost:5173", "http://localhost:3000"]
+    if settings.is_local
+    else []  # in staging/prod, set origins via a reverse-proxy or extend here
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Internal-Key"],
+)
+
 # -- Webhook routes (public, use their own signature verification) ------------
 app.include_router(whatsapp.router)
 app.include_router(telegram.router)
@@ -69,6 +96,11 @@ app.include_router(support.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(customers.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(knowledge.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(credentials.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(orders.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(fulfillments.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(webhook_events.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(agent_runs.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(metrics.router, prefix="/admin", dependencies=_admin_deps)
 
 # -- Web test channel --------------------------------------------------------
 # No auth in local so you can curl /web/chat directly while testing; still

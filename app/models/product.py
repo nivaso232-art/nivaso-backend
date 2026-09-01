@@ -81,8 +81,11 @@ class Product(UUIDMixin, TenantMixin, TimestampMixin, Base):
     )
 
     # Generated, never written by the application.
+    # deferred=True: asyncpg has no native TSVECTOR codec so loading it
+    # eagerly raises. This column is only referenced in SQL expressions
+    # (WHERE search_doc @@ tsquery) — never read as a Python value.
     search_doc: Mapped[str | None] = mapped_column(
-        TSVECTOR, Computed(_PRODUCT_SEARCH_DOC, persisted=True)
+        TSVECTOR, Computed(_PRODUCT_SEARCH_DOC, persisted=True), deferred=True
     )
 
     business: Mapped[Business] = relationship(back_populates="products")
