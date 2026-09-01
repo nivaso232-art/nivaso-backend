@@ -17,7 +17,7 @@ import structlog
 from fastapi import Depends, FastAPI
 
 from app.api import web
-from app.api.admin import businesses, customers, knowledge, products, support
+from app.api.admin import businesses, credentials, customers, knowledge, products, support
 from app.api.deps import require_internal_key
 from app.api.webhooks import razorpay, telegram, whatsapp
 from app.core.config import settings
@@ -65,6 +65,7 @@ app.include_router(products.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(support.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(customers.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(knowledge.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(credentials.router, prefix="/admin", dependencies=_admin_deps)
 
 # -- Web test channel --------------------------------------------------------
 # No auth in local so you can curl /web/chat directly while testing; still

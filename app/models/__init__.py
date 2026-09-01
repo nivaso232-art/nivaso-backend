@@ -10,6 +10,7 @@ from app.models.agent_run import AgentRun
 from app.models.base import Base
 from app.models.business import Business
 from app.models.conversation import Conversation, Message
+from app.models.credential import ProductCredential
 from app.models.customer import Customer, CustomerChannel
 from app.models.fulfillment import Fulfillment
 from app.models.knowledge import Knowledge
@@ -33,6 +34,7 @@ __all__ = [
     "OrderItem",
     "Payment",
     "Product",
+    "ProductCredential",
     "SupportTicket",
     "WebhookEvent",
 ]

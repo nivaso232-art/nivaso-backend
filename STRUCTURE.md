@@ -66,7 +66,8 @@ Each file defines one or more SQLAlchemy model classes that map directly to Post
 | `conversation.py` | `conversations`, `messages` | A `conversation` is one chat session. `messages` is the append-only log of everything said — including the AI's tool calls and results. |
 | `order.py` | `orders`, `order_items` | An order and its line items. `order_items` snapshots the product name/price at purchase time so history doesn't change if the price later changes. |
 | `payment.py` | `payments` | Append-only payment attempts. A failed attempt is never mutated — a retry creates a new row. |
-| `fulfillment.py` | `fulfillments` | Delivery records attached to a paid order. |
+| `fulfillment.py` | `fulfillments` | Delivery records attached to a paid order. Holds a `credential_ref` handle, never the secret. |
+| `credential.py` | `product_credentials` | Encrypted, reusable game-account vault (login + Fernet-encrypted password + capacity/allocated). The "secrets manager" `credential_ref` points into. |
 | `support_ticket.py` | `support_tickets` | Human escalation tickets. Created by the AI when it can't resolve something, or automatically on double-charges. |
 | `knowledge.py` | `knowledge` | Help articles the AI can search to answer customer questions. Has full-text search support just like products. |
 | `agent_run.py` | `agent_runs` | Observability: one row per AI turn recording token counts, latency, and cost estimate. |
@@ -110,6 +111,9 @@ Services contain the rules. They use repositories for data access but own all th
 | `knowledge_service.py` | Searches the help article knowledge base. Truncates long articles before sending to the AI to save tokens. |
 | `support_service.py` | Creates support tickets. Reuses an existing open ticket for the same conversation (prevents duplicate tickets from one frustrated customer). |
 | `fulfillment_service.py` | Reads and updates delivery status for fulfilled orders. |
+| `credential_service.py` | Stocks the credential vault, allocates a slot atomically, and decrypts a secret for delivery. |
+| `delivery_service.py` | On a PAID order, allocates credentials, records the fulfillment (refs only), moves the order to FULFILLED. Idempotent. |
+| `notify.py` | Best-effort outbound send of the delivered credentials to the customer's WhatsApp/Telegram. |
 
 ---
 
@@ -203,6 +207,7 @@ Alembic migration scripts. Run in order to build the full schema.
 |------|-------------|
 | `0001_initial_schema.py` | Creates all 14 tables and 16 Postgres enum types. |
 | `0002_search_rls_indexes.py` | Adds GIN (full-text) and trigram indexes on products and knowledge for fast search. |
+| `0003_product_credentials.py` | Adds the `product_credentials` vault table and `credential_status` enum. |
 
 Run migrations:
 ```bash

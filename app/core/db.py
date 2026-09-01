@@ -66,11 +66,16 @@ SessionFactory: async_sessionmaker[AsyncSession] = async_sessionmaker(
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency yielding a session.
+    """FastAPI dependency yielding a session, committed on a clean response.
 
-    The session is *not* committed here. Writes go through
-    :class:`app.core.uow.UnitOfWork`, which makes the transaction boundary
-    explicit at the call site instead of hiding it in a dependency.
+    Writes are still authored through :class:`app.core.uow.UnitOfWork` for the
+    explicit boundary and rollback-on-error semantics. But FastAPI dependencies
+    like ``get_business`` issue a read *before* the handler's UnitOfWork runs,
+    which autobegins a transaction — so that UnitOfWork sees an existing
+    transaction, treats itself as a nested passthrough, and never commits. The
+    commit here is the backstop that makes those handler writes durable; when a
+    UnitOfWork already owns and commits its transaction, this is a harmless
+    no-op. (Webhook handlers use ``SessionFactory`` directly and are unaffected.)
     """
     async with SessionFactory() as session:
         try:
@@ -78,6 +83,8 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+        else:
+            await session.commit()
 
 
 async def dispose_engine() -> None:

@@ -30,11 +30,14 @@ from app.core.errors import NotFoundError, SignatureError
 from app.core.logging import bind_request_context, clear_request_context
 from app.core.security import verify_razorpay_signature
 from app.core.uow import UnitOfWork
-from app.models.enums import PaymentProvider, WebhookSource
+from app.models.enums import OrderStatus, PaymentProvider, TicketPriority, WebhookSource
+from app.models.order import Order
 from app.models.payment import Payment
 from app.providers.razorpay.client import parse_webhook_outcome
 from app.repositories.payments import PaymentRepository
 from app.repositories.webhook_events import WebhookEventRepository
+from app.services.delivery_service import DeliveryService, format_delivery_message
+from app.services.notify import send_to_customer
 from app.services.payment_service import PaymentService, ProviderOutcome
 from app.services.support_service import SupportService
 
@@ -136,6 +139,12 @@ async def _process_razorpay_event(payload: dict) -> None:
                 needs_escalation=result.needs_escalation,
             )
 
+            # Auto-deliver credentials once the order actually became PAID.
+            # Runs in its own transactions so an out-of-stock delivery never
+            # rolls back the payment that already committed above.
+            if result.order_status_changed and result.order.status is OrderStatus.PAID:
+                await _deliver_credentials(session, business_id, result.order)
+
         except NotFoundError as exc:
             log.error("razorpay_payment_not_found", error=str(exc), event_id=event_id)
             async with UnitOfWork(session):
@@ -146,6 +155,52 @@ async def _process_razorpay_event(payload: dict) -> None:
                 await webhook_repo.mark_failed(event, str(exc))
 
     clear_request_context()
+
+
+async def _deliver_credentials(
+    session: AsyncSession, business_id: uuid.UUID, order: Order
+) -> None:
+    """Allocate + send game credentials for a freshly-paid order.
+
+    Best-effort and self-contained: on any failure it logs (and escalates an
+    out-of-stock order to a human) rather than propagating, so the payment
+    stays recorded as PAID.
+    """
+    try:
+        async with UnitOfWork(session):
+            delivery = await DeliveryService(session, business_id).deliver_for_order(order)
+    except Exception as exc:
+        log.exception(
+            "credential_delivery_failed", reference=order.reference, error=str(exc)
+        )
+        return
+
+    if delivery.delivered and delivery.items:
+        text = format_delivery_message(delivery.order_reference, delivery.items)
+        await send_to_customer(session, business_id, order.customer_id, text)
+        log.info(
+            "credentials_delivered",
+            reference=delivery.order_reference,
+            count=len(delivery.items),
+        )
+    elif delivery.out_of_stock:
+        async with UnitOfWork(session):
+            await SupportService(session, business_id).create_ticket(
+                customer_id=order.customer_id,
+                reason="OUT_OF_STOCK",
+                summary=(
+                    f"Order {delivery.order_reference} is PAID but no credentials "
+                    f"are in stock for: {', '.join(delivery.missing_products)}. "
+                    "Add stock and re-deliver."
+                ),
+                priority=TicketPriority.URGENT,
+                reuse_open=False,
+            )
+        log.error(
+            "credentials_out_of_stock",
+            reference=delivery.order_reference,
+            missing=delivery.missing_products,
+        )
 
 
 async def _locate_payment_globally(

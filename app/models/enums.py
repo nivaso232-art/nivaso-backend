@@ -125,6 +125,12 @@ class FulfillmentStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class CredentialStatus(StrEnum):
+    ACTIVE = "active"          # available for allocation
+    EXHAUSTED = "exhausted"    # capacity fully allocated
+    DISABLED = "disabled"      # manually taken out of the pool
+
+
 class KnowledgeStatus(StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"

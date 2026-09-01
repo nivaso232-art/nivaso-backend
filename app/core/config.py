@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     # -- Gemini (Google AI Studio) ----------------------------------------
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.6-flash"
+
+    # -- Credential vault -------------------------------------------------
+    # Fernet key used to encrypt game-account secrets at rest. Generate with
+    # Fernet.generate_key(). Without it, credential delivery cannot run.
+    credential_enc_key: str = ""
     agent_effort: AgentEffort = "low"
     agent_max_tokens: int = 16_000
     agent_max_iterations: int = 8
