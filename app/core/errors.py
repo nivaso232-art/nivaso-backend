@@ -119,9 +119,10 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        log.exception("unhandled_error", path=request.url.path)
-        # In local dev, surface the real exception in the response so you don't
-        # have to dig through the terminal. Never do this in staging/prod.
+        try:
+            log.exception("unhandled_error", path=request.url.path)
+        except Exception:
+            pass
         details: dict[str, Any] = {}
         if settings.is_local:
             details = {"exception": type(exc).__name__, "message": str(exc)}

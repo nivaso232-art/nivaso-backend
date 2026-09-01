@@ -66,8 +66,11 @@ class Knowledge(UUIDMixin, TenantMixin, TimestampMixin, Base):
         "metadata", JSONB, nullable=False, server_default="{}"
     )
 
+    # deferred=True: asyncpg has no native TSVECTOR codec so loading it
+    # eagerly raises. This column is only referenced in SQL expressions — never
+    # read as a Python value.
     search_doc: Mapped[str | None] = mapped_column(
-        TSVECTOR, Computed(_KNOWLEDGE_SEARCH_DOC, persisted=True)
+        TSVECTOR, Computed(_KNOWLEDGE_SEARCH_DOC, persisted=True), deferred=True
     )
 
     business: Mapped[Business] = relationship(back_populates="knowledge_articles")

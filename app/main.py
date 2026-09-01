@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 
 import structlog
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import web
 from app.api.admin import businesses, customers, knowledge, products, support
@@ -51,6 +52,20 @@ app = FastAPI(
 )
 
 register_exception_handlers(app)
+
+# -- CORS (allow the admin frontend in local dev) ----------------------------
+_cors_origins = (
+    ["http://localhost:5173", "http://localhost:3000"]
+    if settings.is_local
+    else []  # in staging/prod, set origins via a reverse-proxy or extend here
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Internal-Key"],
+)
 
 # -- Webhook routes (public, use their own signature verification) ------------
 app.include_router(whatsapp.router)
