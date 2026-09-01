@@ -34,6 +34,8 @@ from app.models.enums import OrderStatus, PaymentProvider, TicketPriority, Webho
 from app.models.order import Order
 from app.models.payment import Payment
 from app.providers.razorpay.client import parse_webhook_outcome
+from app.repositories.business_channels import BusinessChannelRepository
+from app.repositories.businesses import BusinessRepository
 from app.repositories.payments import PaymentRepository
 from app.repositories.webhook_events import WebhookEventRepository
 from app.services.delivery_service import DeliveryService, format_delivery_message
@@ -51,7 +53,7 @@ async def receive_webhook(
     background_tasks: BackgroundTasks,
     x_razorpay_signature: str | None = Header(default=None),
 ) -> Response:
-    """Inbound Razorpay payment events."""
+    """Inbound Razorpay events — single-tenant / global-secret path."""
     raw_body = await request.body()
 
     try:
@@ -62,6 +64,52 @@ async def receive_webhook(
         )
     except SignatureError as exc:
         log.warning("razorpay_signature_invalid", error=str(exc))
+        return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    payload = await request.json()
+    background_tasks.add_task(_process_razorpay_event, payload)
+    return Response(status_code=status.HTTP_200_OK)
+
+
+@router.post("/{slug}")
+async def receive_webhook_for_business(
+    slug: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_razorpay_signature: str | None = Header(default=None),
+) -> Response:
+    """Inbound Razorpay events — per-business multi-tenant path.
+
+    Register each business Razorpay account with:
+        Webhook URL = <host>/webhooks/razorpay/<slug>
+        Webhook Secret = the webhook_secret stored in business_channels
+    """
+    raw_body = await request.body()
+
+    # Quick DB lookup for the business's Razorpay webhook secret.
+    async with SessionFactory() as quick_session:
+        biz_repo = BusinessRepository(quick_session)
+        biz = await biz_repo.get_by_slug(slug)
+        if biz is None:
+            return Response(status_code=status.HTTP_404_NOT_FOUND)
+        ch_repo = BusinessChannelRepository(quick_session)
+        channel_cfg = await ch_repo.get_for_business(biz.id, "razorpay")
+
+    webhook_secret = ""
+    if channel_cfg:
+        webhook_secret = channel_cfg.credentials.get("webhook_secret", "")
+
+    # Fall back to global secret if not configured per business
+    webhook_secret = webhook_secret or settings.razorpay_webhook_secret
+
+    try:
+        verify_razorpay_signature(
+            webhook_secret=webhook_secret,
+            payload=raw_body,
+            header=x_razorpay_signature,
+        )
+    except SignatureError as exc:
+        log.warning("razorpay_signature_invalid", slug=slug, error=str(exc))
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
 
     payload = await request.json()

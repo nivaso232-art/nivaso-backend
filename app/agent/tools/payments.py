@@ -25,6 +25,7 @@ from app.core.ids import normalize_reference
 from app.models.enums import ConversationState, OrderStatus, PaymentProvider
 from app.providers.mock_payments import mock_payment_link
 from app.providers.razorpay.client import RazorpayClient
+from app.repositories.business_channels import BusinessChannelRepository
 
 log = structlog.get_logger(__name__)
 
@@ -49,13 +50,19 @@ async def create_payment_link(
     )
 
     if settings.payments_mock:
-        # Razorpay unavailable (e.g. pending KYC): issue a mock link that
-        # completes the payment when opened. Same downstream flow, no real money.
         link = mock_payment_link(slug=ctx.business.slug, reference=order.reference)
         provider = PaymentProvider.MANUAL
     else:
+        # Use per-business Razorpay credentials if configured; fall back to global.
+        ch_repo = BusinessChannelRepository(ctx.session)
+        rzp_channel = await ch_repo.get_for_business(ctx.business_id, "razorpay")
+        rzp_creds = rzp_channel.credentials if rzp_channel else {}
+
         try:
-            client = RazorpayClient()
+            client = RazorpayClient(
+                key_id=rzp_creds.get("key_id") or None,
+                key_secret=rzp_creds.get("key_secret") or None,
+            )
             link = await client.create_payment_link(
                 amount_minor=order.total_in_minor_units(),
                 currency=order.currency,

@@ -39,6 +39,8 @@ class ChannelOut(BaseModel):
     def from_orm(cls, ch: BusinessChannel, slug: str) -> "ChannelOut":
         if ch.channel_type == "telegram":
             path = f"/webhooks/telegram/{slug}"
+        elif ch.channel_type == "razorpay":
+            path = f"/webhooks/razorpay/{slug}"
         else:
             path = "/webhooks/whatsapp"
         return cls(
@@ -60,6 +62,12 @@ class WhatsAppChannelIn(BaseModel):
     access_token: str
     app_secret: str = ""
     verify_token: str = ""
+
+
+class RazorpayChannelIn(BaseModel):
+    key_id: str
+    key_secret: str
+    webhook_secret: str = ""
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -122,6 +130,34 @@ async def configure_whatsapp(
             business_id=business.id,
             channel_type="whatsapp",
             external_channel_id=body.phone_number_id,
+            credentials=credentials,
+        )
+    return ChannelOut.from_orm(channel, slug)
+
+
+@router.put("/razorpay", response_model=ChannelOut, status_code=status.HTTP_200_OK)
+async def configure_razorpay(
+    slug: str,
+    body: RazorpayChannelIn,
+    business: Business = Depends(get_business),
+    session: AsyncSession = Depends(get_session),
+) -> ChannelOut:
+    """Create or update the Razorpay config for this business.
+
+    Each business gets its own webhook URL: /webhooks/razorpay/{slug}.
+    Register that URL in the Razorpay dashboard for this merchant account.
+    """
+    credentials = {
+        "key_id": body.key_id,
+        "key_secret": body.key_secret,
+        "webhook_secret": body.webhook_secret,
+    }
+    repo = BusinessChannelRepository(session)
+    async with UnitOfWork(session):
+        channel = await repo.upsert(
+            business_id=business.id,
+            channel_type="razorpay",
+            external_channel_id=body.key_id,
             credentials=credentials,
         )
     return ChannelOut.from_orm(channel, slug)
