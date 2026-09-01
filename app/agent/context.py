@@ -21,6 +21,7 @@ from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.services.catalog_service import CatalogService
 from app.services.conversation_service import ConversationService
+from app.services.credential_service import CredentialService
 from app.services.fulfillment_service import FulfillmentService
 from app.services.knowledge_service import KnowledgeService
 from app.services.order_service import OrderService
@@ -81,6 +82,10 @@ class ToolContext:
     @cached_property
     def fulfillment(self) -> FulfillmentService:
         return FulfillmentService(self.session, self.business_id)
+
+    @cached_property
+    def credentials(self) -> CredentialService:
+        return CredentialService(self.session, self.business_id)
 
     @cached_property
     def conversations(self) -> ConversationService:

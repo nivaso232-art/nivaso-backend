@@ -13,6 +13,7 @@ from typing import Any
 
 from app.agent.tools.base import ToolSpec
 from app.agent.tools.catalog import GET_PRODUCT, SEARCH_PRODUCTS
+from app.agent.tools.delivery import GET_MY_CREDENTIALS
 from app.agent.tools.knowledge import SEARCH_KNOWLEDGE
 from app.agent.tools.orders import CANCEL_ORDER, CREATE_ORDER, GET_ORDER_STATUS
 from app.agent.tools.payments import CHECK_PAYMENT_STATUS, CREATE_PAYMENT_LINK
@@ -28,6 +29,7 @@ TOOLS: tuple[ToolSpec, ...] = (
     CANCEL_ORDER,
     CREATE_PAYMENT_LINK,
     CHECK_PAYMENT_STATUS,
+    GET_MY_CREDENTIALS,
     SEARCH_KNOWLEDGE,
     CREATE_SUPPORT_TICKET,
 )

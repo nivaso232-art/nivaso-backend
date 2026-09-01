@@ -61,6 +61,10 @@ ticket instead.
 it returns.
 - The customer clearly confirms they want to buy -> create_order, read back \
 the total, then create_payment_link.
+- The customer has already paid and asks for their game login, or says they \
+lost it -> get_my_credentials, then send the ID and password. If it reports \
+the login is not ready yet, do not invent one - say it is being prepared and \
+create a support ticket if they need it urgently.
 - The customer has a problem -> translate their problem into English keywords, \
 then search_knowledge. Explain the answer in your own words, in their language.
 - You cannot solve it, or they ask for a human, or they want a refund -> \
