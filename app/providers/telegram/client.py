@@ -1,4 +1,8 @@
-"""Telegram Bot API — sending messages."""
+"""Telegram Bot API — sending messages.
+
+Per-business bot tokens are passed at construction time so each business
+can use its own Telegram bot. Falls back to global settings when not provided.
+"""
 
 from __future__ import annotations
 
@@ -17,12 +21,13 @@ _BASE = "https://api.telegram.org"
 class TelegramClient:
     """Send messages via the Telegram Bot API."""
 
-    def __init__(self) -> None:
-        if not settings.telegram_bot_token:
+    def __init__(self, *, bot_token: str | None = None) -> None:
+        token = bot_token or settings.telegram_bot_token
+        if not token:
             raise ProviderError(
                 "Telegram is not configured (TELEGRAM_BOT_TOKEN missing)"
             )
-        self._base = f"{_BASE}/bot{settings.telegram_bot_token}"
+        self._base = f"{_BASE}/bot{token}"
 
     @retry(
         stop=stop_after_attempt(3),

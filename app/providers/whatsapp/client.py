@@ -3,6 +3,10 @@
 This client only sends. Receiving is handled by the webhook handler and
 the channel parser. Retry is via tenacity on transient errors; a 4xx
 from Meta (bad token, invalid phone) is not retried.
+
+Per-business credentials are passed at construction time so multi-tenant
+deployments can use different phone numbers and access tokens for each
+business. Falls back to global settings when not provided.
 """
 
 from __future__ import annotations
@@ -20,8 +24,15 @@ log = structlog.get_logger(__name__)
 class WhatsAppClient:
     """Send text messages via the WhatsApp Cloud API."""
 
-    def __init__(self) -> None:
-        if not settings.whatsapp_access_token or not settings.whatsapp_phone_number_id:
+    def __init__(
+        self,
+        *,
+        phone_number_id: str | None = None,
+        access_token: str | None = None,
+    ) -> None:
+        self._phone_number_id = phone_number_id or settings.whatsapp_phone_number_id
+        self._access_token = access_token or settings.whatsapp_access_token
+        if not self._phone_number_id or not self._access_token:
             raise ProviderError(
                 "WhatsApp is not configured "
                 "(WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID missing)"
@@ -43,7 +54,7 @@ class WhatsAppClient:
         """
         url = (
             f"{settings.whatsapp_graph_base_url}"
-            f"/{settings.whatsapp_phone_number_id}/messages"
+            f"/{self._phone_number_id}/messages"
         )
         payload = {
             "messaging_product": "whatsapp",
@@ -53,7 +64,7 @@ class WhatsAppClient:
             "text": {"body": text, "preview_url": False},
         }
         headers = {
-            "Authorization": f"Bearer {settings.whatsapp_access_token}",
+            "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
         }
 
@@ -62,7 +73,6 @@ class WhatsAppClient:
                 resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                # 5xx → retried by tenacity; 4xx → not retried (config issue)
                 if exc.response.status_code >= 500:
                     raise ProviderError(
                         f"WhatsApp send failed (server): {exc.response.text}",

@@ -36,6 +36,7 @@ from app.core.security import verify_meta_signature
 from app.core.uow import UnitOfWork
 from app.models.enums import Channel, MessageType
 from app.providers.whatsapp.client import WhatsAppClient
+from app.repositories.business_channels import BusinessChannelRepository
 from app.repositories.businesses import BusinessRepository
 from app.repositories.webhook_events import WebhookEventRepository
 from app.models.enums import WebhookSource
@@ -137,17 +138,32 @@ async def _process_whatsapp_payload(
 
 
 async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
-    """Resolve context, run the agent turn, send the reply."""
+    """Resolve context, run the agent turn, send the reply.
+
+    Routing priority:
+    1. business_channels table: match by phone_number_id (multi-tenant, DB-driven)
+    2. DEFAULT_BUSINESS_SLUG + global credentials (single-tenant fallback)
+    """
     bind_request_context(channel="whatsapp", external_id=msg.wa_id)
 
-    if not settings.default_business_slug:
-        log.error("whatsapp_no_business_slug_configured")
-        return
+    wa_credentials: dict = {}
 
     try:
         async with UnitOfWork(session):
             businesses = BusinessRepository(session)
-            business = await businesses.get_active_or_raise(settings.default_business_slug)
+            ch_repo = BusinessChannelRepository(session)
+
+            # Try DB-based routing first
+            channel_cfg = await ch_repo.get_by_external_id("whatsapp", msg.phone_number_id)
+            if channel_cfg:
+                business = await businesses.get_or_raise(channel_cfg.business_id)
+                wa_credentials = channel_cfg.credentials
+            elif settings.default_business_slug:
+                business = await businesses.get_active_or_raise(settings.default_business_slug)
+                wa_credentials = {}  # use global settings
+            else:
+                log.error("whatsapp_no_business_found", phone_number_id=msg.phone_number_id)
+                return
 
             customer_svc = CustomerService(session, business.id)
             customer, channel_row = await customer_svc.resolve_or_create(
@@ -189,7 +205,7 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
             knowledge_titles = [a["title"] for a in summary]
 
     except NotFoundError as exc:
-        log.error("whatsapp_business_not_found", slug=settings.default_business_slug, error=str(exc))
+        log.error("whatsapp_business_not_found", phone_number_id=msg.phone_number_id, error=str(exc))
         return
 
     # Run agent turn — the runner opens its own UnitOfWork to commit its writes.
@@ -211,9 +227,12 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
         log.exception("whatsapp_agent_failed", error=str(exc))
         reply = "Sorry, something went wrong. Please try again in a moment."
 
-    # Send reply back to the customer.
+    # Send reply back using per-business credentials if available.
     try:
-        wa_client = WhatsAppClient()
+        wa_client = WhatsAppClient(
+            phone_number_id=wa_credentials.get("phone_number_id") or None,
+            access_token=wa_credentials.get("access_token") or None,
+        )
         wamid = await wa_client.send_text(to=msg.wa_id, text=reply)
         log.info("whatsapp_reply_sent", to=msg.wa_id, wamid=wamid)
     except ProviderError as exc:

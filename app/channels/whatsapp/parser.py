@@ -21,6 +21,7 @@ class InboundMessage:
     external_message_id: str    # wamid — used for message-level idempotency
     external_event_id: str      # synthesised from wamid; used for webhook_events
     wa_id: str                  # sender's phone number / wa_id
+    phone_number_id: str        # receiving WA Business phone number ID (multi-tenant routing key)
     display_name: str | None    # from the contacts block; may be absent
     text: str | None            # None for non-text message types
     message_type: str           # text | image | audio | video | document | …
@@ -41,6 +42,7 @@ def parse_webhook(payload: dict[str, Any]) -> list[InboundMessage]:
                 continue
 
             value = change.get("value", {})
+            phone_number_id: str = value.get("metadata", {}).get("phone_number_id", "")
 
             # Build a wa_id → display_name lookup from the contacts block.
             contacts: dict[str, str | None] = {
@@ -62,6 +64,7 @@ def parse_webhook(payload: dict[str, Any]) -> list[InboundMessage]:
                         external_message_id=wamid,
                         external_event_id=wamid,
                         wa_id=wa_id,
+                        phone_number_id=phone_number_id,
                         display_name=contacts.get(wa_id),
                         text=text,
                         message_type=msg_type,

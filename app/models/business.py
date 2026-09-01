@@ -12,6 +12,7 @@ from app.models.base import Base, TimestampMixin, UUIDMixin, pg_enum
 from app.models.enums import BusinessStatus
 
 if TYPE_CHECKING:
+    from app.models.business_channel import BusinessChannel
     from app.models.customer import Customer
     from app.models.knowledge import Knowledge
     from app.models.product import Product
@@ -46,5 +47,8 @@ class Business(UUIDMixin, TimestampMixin, Base):
         back_populates="business", cascade="all, delete-orphan", passive_deletes=True
     )
     knowledge_articles: Mapped[list[Knowledge]] = relationship(
+        back_populates="business", cascade="all, delete-orphan", passive_deletes=True
+    )
+    channels_config: Mapped[list[BusinessChannel]] = relationship(
         back_populates="business", cascade="all, delete-orphan", passive_deletes=True
     )

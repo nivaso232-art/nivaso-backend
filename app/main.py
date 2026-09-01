@@ -21,6 +21,7 @@ from app.api import mock_payments, web
 from app.api.admin import (
     agent_runs,
     businesses,
+    channels,
     credentials,
     customers,
     fulfillments,
@@ -100,6 +101,7 @@ app.include_router(orders.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(fulfillments.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(webhook_events.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(agent_runs.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(channels.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(metrics.router, prefix="/admin", dependencies=_admin_deps)
 
 # -- Web test channel --------------------------------------------------------

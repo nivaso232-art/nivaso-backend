@@ -34,6 +34,7 @@ from app.core.security import verify_telegram_secret
 from app.core.uow import UnitOfWork
 from app.models.enums import Channel, MessageType, WebhookSource
 from app.providers.telegram.client import TelegramClient
+from app.repositories.business_channels import BusinessChannelRepository
 from app.repositories.businesses import BusinessRepository
 from app.repositories.webhook_events import WebhookEventRepository
 from app.services.catalog_service import CatalogService
@@ -51,7 +52,7 @@ async def receive_update(
     background_tasks: BackgroundTasks,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ) -> Response:
-    """Inbound Telegram updates."""
+    """Inbound Telegram updates — single-tenant / global-config path."""
     try:
         verify_telegram_secret(
             expected=settings.telegram_webhook_secret,
@@ -62,11 +63,58 @@ async def receive_update(
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
 
     payload = await request.json()
-    background_tasks.add_task(_process_telegram_update, payload)
+    background_tasks.add_task(_process_telegram_update, payload, business_slug=None, tg_credentials=None)
     return Response(status_code=status.HTTP_200_OK)
 
 
-async def _process_telegram_update(payload: dict) -> None:
+@router.post("/{slug}")
+async def receive_update_for_business(
+    slug: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+) -> Response:
+    """Inbound Telegram updates — per-business multi-tenant path.
+
+    Register each business bot with:
+        setWebhook url=<host>/webhooks/telegram/<slug>
+                    secret_token=<business_telegram_webhook_secret>
+    """
+    # Quick DB lookup to get this business's webhook secret for verification.
+    async with SessionFactory() as quick_session:
+        biz_repo = BusinessRepository(quick_session)
+        biz = await biz_repo.get_by_slug(slug)
+        if biz is None:
+            return Response(status_code=status.HTTP_404_NOT_FOUND)
+        ch_repo = BusinessChannelRepository(quick_session)
+        channel_cfg = await ch_repo.get_for_business(biz.id, "telegram")
+
+    webhook_secret = ""
+    tg_credentials: dict | None = None
+    if channel_cfg:
+        webhook_secret = channel_cfg.credentials.get("webhook_secret", "")
+        tg_credentials = channel_cfg.credentials
+
+    try:
+        verify_telegram_secret(
+            expected=webhook_secret,
+            header=x_telegram_bot_api_secret_token,
+        )
+    except SignatureError as exc:
+        log.warning("telegram_signature_invalid", slug=slug, error=str(exc))
+        return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    payload = await request.json()
+    background_tasks.add_task(_process_telegram_update, payload, business_slug=slug, tg_credentials=tg_credentials)
+    return Response(status_code=status.HTTP_200_OK)
+
+
+async def _process_telegram_update(
+    payload: dict,
+    *,
+    business_slug: str | None,
+    tg_credentials: dict | None,
+) -> None:
     """Background processing of a Telegram update."""
     msg = parse_update(payload)
     if msg is None:
@@ -88,7 +136,7 @@ async def _process_telegram_update(payload: dict) -> None:
             await webhook_repo.mark_processing(event)
 
         try:
-            await _handle_message(session, msg)
+            await _handle_message(session, msg, business_slug=business_slug, tg_credentials=tg_credentials)
             async with UnitOfWork(session):
                 await webhook_repo.mark_processed(event)
         except Exception as exc:
@@ -97,17 +145,24 @@ async def _process_telegram_update(payload: dict) -> None:
                 await webhook_repo.mark_failed(event, str(exc))
 
 
-async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
+async def _handle_message(
+    session: AsyncSession,
+    msg: InboundMessage,
+    *,
+    business_slug: str | None = None,
+    tg_credentials: dict | None = None,
+) -> None:
     bind_request_context(channel="telegram", external_id=msg.chat_id)
 
-    if not settings.default_business_slug:
+    slug = business_slug or settings.default_business_slug
+    if not slug:
         log.error("telegram_no_business_slug_configured")
         return
 
     try:
         async with UnitOfWork(session):
             businesses = BusinessRepository(session)
-            business = await businesses.get_active_or_raise(settings.default_business_slug)
+            business = await businesses.get_active_or_raise(slug)
 
             customer_svc = CustomerService(session, business.id)
             customer, channel_row = await customer_svc.resolve_or_create(
@@ -147,7 +202,7 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
             knowledge_titles = [a["title"] for a in summary]
 
     except NotFoundError as exc:
-        log.error("telegram_business_not_found", slug=settings.default_business_slug, error=str(exc))
+        log.error("telegram_business_not_found", slug=slug, error=str(exc))
         return
 
     try:
@@ -169,7 +224,8 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
         reply = "Sorry, something went wrong. Please try again in a moment."
 
     try:
-        tg_client = TelegramClient()
+        bot_token = (tg_credentials or {}).get("bot_token") or None
+        tg_client = TelegramClient(bot_token=bot_token)
         await tg_client.send_message(chat_id=msg.chat_id, text=reply)
         log.info("telegram_reply_sent", chat_id=msg.chat_id)
     except ProviderError as exc:
