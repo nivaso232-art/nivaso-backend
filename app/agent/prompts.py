@@ -140,24 +140,13 @@ def build_turn_context(
     harder to reason about. If a turn genuinely needs the date, add it here -
     in the volatile half - not in the cached block.
     """
-    lines = [
-        "<current_context>",
-        f"Customer: {customer.display_name}",
-        f"Conversation stage: {conversation.current_state}",
-    ]
-
-    if open_order is not None:
-        lines.extend(
-            [
-                f"Open order: {open_order.reference}",
-                f"Open order status: {open_order.status.value}",
-                f"Open order total: {open_order.total} {open_order.currency}",
-                "The customer may or may not be talking about this order. "
-                "Do not assume they are.",
-            ]
-        )
-    else:
-        lines.append("Open order: none")
-
-    lines.append("</current_context>")
-    return "\n".join(lines)
+    order_part = (
+        f"{open_order.reference} {open_order.status.value} "
+        f"{open_order.total}{open_order.currency}"
+        if open_order is not None
+        else "none"
+    )
+    return (
+        f"[ctx: customer={customer.display_name}, "
+        f"stage={conversation.current_state}, order={order_part}]"
+    )

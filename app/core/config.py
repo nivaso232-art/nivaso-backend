@@ -55,8 +55,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     agent_effort: AgentEffort = "low"
-    agent_max_tokens: int = 16_000
-    agent_max_iterations: int = 8
+    agent_max_tokens: int = 512   # chat replies: 50-150 tok; tool calls: 20-80 tok
+    agent_max_iterations: int = 5  # purchase flow rarely needs more than 4 tool hops
 
     # -- WhatsApp ---------------------------------------------------------
     whatsapp_phone_number_id: str = ""

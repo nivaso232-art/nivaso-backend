@@ -58,16 +58,9 @@ async def search_knowledge(
 SEARCH_KNOWLEDGE = ToolSpec(
     name="search_knowledge",
     description=(
-        "Search this business's help articles for troubleshooting steps, "
-        "policies, and how-to instructions. Use this whenever the customer "
-        "reports a problem rather than asking to buy something.\n\n"
-        "IMPORTANT: the query must be ENGLISH KEYWORDS describing the "
-        "problem. Customers often write in Tamil, Tanglish, or mixed "
-        "language - translate first, then search. Examples:\n"
-        '  "Bro game launch aagala"  -> "game launcher not starting error"\n'
-        '  "download panna mudiyala" -> "cannot download game"\n'
-        '  "OTP varala"              -> "OTP not received verification code"\n'
-        "Search by symptom, not by product name."
+        "Search help articles for troubleshooting, policies, and how-to guides. "
+        "Use for customer problems, not product questions. "
+        "Translate the customer's message to English symptom keywords before searching."
     ),
     input_schema=schema(
         properties={

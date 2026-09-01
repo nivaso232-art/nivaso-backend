@@ -81,6 +81,24 @@ def _to_json(value: Any) -> str:
     return json.dumps(value, default=str)
 
 
+# Maximum characters kept for a tool result that is being replayed from history.
+# The model has already acted on the full result; replaying a compact version
+# saves hundreds of tokens per prior tool call without losing context.
+_HISTORY_TOOL_RESULT_LIMIT = 300
+
+
+def _compact_tool_result(result: Any, is_error: bool) -> str:
+    """Truncate a historical tool result to keep token cost low on replay.
+
+    The full result is stored in the DB (for audit); the model only needs a
+    reminder of what came back, not every field.
+    """
+    raw = _to_json(result)
+    if len(raw) <= _HISTORY_TOOL_RESULT_LIMIT:
+        return raw
+    return raw[:_HISTORY_TOOL_RESULT_LIMIT] + "…(truncated)"
+
+
 def _history_to_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
     """Convert stored message rows to Anthropic Messages API format.
 
@@ -115,14 +133,16 @@ def _history_to_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
                 i += 1
 
             # Collect the following tool results as one user turn.
+            # Results are compacted on replay — full payload lives in the DB.
             tool_result_blocks: list[dict[str, Any]] = []
             while i < len(msgs) and msgs[i].message_type == MessageType.TOOL_RESULT:
                 m = msgs[i]
+                is_err = m.payload.get("is_error", False)
                 tool_result_blocks.append({
                     "type": "tool_result",
                     "tool_use_id": m.tool_use_id or str(m.id),
-                    "content": _to_json(m.payload.get("result", "")),
-                    "is_error": m.payload.get("is_error", False),
+                    "content": _compact_tool_result(m.payload.get("result", ""), is_err),
+                    "is_error": is_err,
                 })
                 i += 1
 

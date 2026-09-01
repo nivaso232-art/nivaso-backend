@@ -144,7 +144,7 @@ async def _seed(s: AsyncSession) -> None:
         id=p_gta5_id, business_id=biz_id,
         sku="GAME-GTA5-PC-001",
         name="Grand Theft Auto V - PC",
-        description="Open-world action-adventure by Rockstar. Includes GTA Online access.",
+        description="Also known as GTA 5 or GTA V. Open-world action-adventure by Rockstar. Includes GTA Online access.",
         price=Decimal("229.00"), currency="INR",
         status=ProductStatus.ACTIVE, category="Game",
         metadata_={"platform": "PC", "edition": "Standard", "genre": "Action", "delivery": "key_email"},
