@@ -126,6 +126,19 @@ def _as_response_dict(result: Any, is_error: bool) -> dict[str, Any]:
     return {"result": result}
 
 
+def _finish_reason(candidate: Any) -> str:
+    """The finish reason as a short string that fits stop_reason VARCHAR(32).
+
+    ``str(candidate.finish_reason)`` yields e.g. "FinishReason.MALFORMED_FUNCTION_CALL"
+    (36 chars) which overflows the column; the enum ``.name`` is just
+    "MALFORMED_FUNCTION_CALL".
+    """
+    fr = getattr(candidate, "finish_reason", None)
+    if fr is None:
+        return ""
+    return (getattr(fr, "name", None) or str(fr))[:32]
+
+
 def _history_to_contents(messages: Sequence[Message]) -> list[types.Content]:
     """Rebuild Gemini ``contents`` from the stored message log.
 
@@ -256,7 +269,7 @@ class GeminiAgentRunner:
         )
 
         total_input = total_output = total_cache_read = 0
-        iterations = total_tool_calls = 0
+        iterations = total_tool_calls = malformed_retries = 0
         finish_reason: str | None = None
         last_text = ""
 
@@ -285,13 +298,16 @@ class GeminiAgentRunner:
                     candidate = (
                         response.candidates[0] if response.candidates else None
                     )
-                    if candidate is None or candidate.content is None:
-                        # Safety block or empty candidate — stop with a fallback.
+                    if candidate is None:
                         log.warning("gemini_no_candidate")
                         break
 
-                    finish_reason = str(getattr(candidate, "finish_reason", "") or "")
-                    parts = candidate.content.parts or []
+                    # Use the enum's short name (e.g. "MALFORMED_FUNCTION_CALL"),
+                    # not str() ("FinishReason.MALFORMED_FUNCTION_CALL", 36 chars),
+                    # which overflows agent_runs.stop_reason VARCHAR(32).
+                    finish_reason = _finish_reason(candidate)
+                    content = candidate.content
+                    parts = (content.parts if content is not None else None) or []
 
                     text_chunks = [p.text for p in parts if getattr(p, "text", None)]
                     if text_chunks:
@@ -302,6 +318,20 @@ class GeminiAgentRunner:
                         for p in parts
                         if getattr(p, "function_call", None)
                     ]
+
+                    # Gemini flash models occasionally emit a malformed function
+                    # call (MALFORMED_FUNCTION_CALL) with nothing usable. It's
+                    # transient — retry a couple of times before giving up.
+                    if (
+                        not function_calls
+                        and not last_text
+                        and "MALFORMED" in finish_reason
+                        and malformed_retries < 2
+                    ):
+                        malformed_retries += 1
+                        log.warning("gemini_malformed_retry", attempt=malformed_retries)
+                        continue
+
                     if not function_calls:
                         break
 
