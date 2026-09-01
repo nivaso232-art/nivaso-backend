@@ -140,9 +140,9 @@ async def _process_whatsapp_payload(
 async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
     """Resolve context, run the agent turn, send the reply.
 
-    Routing priority:
-    1. business_channels table: match by phone_number_id (multi-tenant, DB-driven)
-    2. DEFAULT_BUSINESS_SLUG + global credentials (single-tenant fallback)
+    Routing: business_channels table — match by phone_number_id (multi-tenant, DB-driven).
+    No fallback. Configure the phone number in the admin panel:
+      Business → Channels → WhatsApp
     """
     bind_request_context(channel="whatsapp", external_id=msg.wa_id)
 
@@ -153,17 +153,17 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
             businesses = BusinessRepository(session)
             ch_repo = BusinessChannelRepository(session)
 
-            # Try DB-based routing first
             channel_cfg = await ch_repo.get_by_external_id("whatsapp", msg.phone_number_id)
-            if channel_cfg:
-                business = await businesses.get_or_raise(channel_cfg.business_id)
-                wa_credentials = channel_cfg.credentials
-            elif settings.default_business_slug:
-                business = await businesses.get_active_or_raise(settings.default_business_slug)
-                wa_credentials = {}  # use global settings
-            else:
-                log.error("whatsapp_no_business_found", phone_number_id=msg.phone_number_id)
+            if not channel_cfg:
+                log.error(
+                    "whatsapp_no_business_for_phone_number",
+                    phone_number_id=msg.phone_number_id,
+                    hint="Configure this number: Admin → Business → Channels → WhatsApp",
+                )
                 return
+
+            business = await businesses.get_or_raise(channel_cfg.business_id)
+            wa_credentials = channel_cfg.credentials
 
             customer_svc = CustomerService(session, business.id)
             customer, channel_row = await customer_svc.resolve_or_create(
@@ -205,7 +205,11 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
             knowledge_titles = [a["title"] for a in summary]
 
     except NotFoundError as exc:
-        log.error("whatsapp_business_not_found", phone_number_id=msg.phone_number_id, error=str(exc))
+        log.error(
+            "whatsapp_business_inactive",
+            phone_number_id=msg.phone_number_id,
+            error=str(exc),
+        )
         return
 
     # Run agent turn — the runner opens its own UnitOfWork to commit its writes.

@@ -98,7 +98,54 @@ def build_cached_system(
     ``knowledge_titles`` gives the agent cheap orientation about what help
     topics exist, so it knows whether searching is worth doing at all.
     """
+    s: dict = business.settings or {}
     sections = [_CORE_RULES.format(business_name=business.name)]
+
+    # ── Business capabilities derived from settings ──────────────────────────
+    # These are deterministic per-business and therefore safe to cache.
+    # When the admin toggles a setting the text changes → cache naturally resets.
+
+    razorpay_enabled: bool = bool(s.get("razorpay_enabled", True))
+    if not razorpay_enabled:
+        sections.append(
+            "## Payment availability\n"
+            "Online payment links are currently DISABLED for this business. "
+            "Do NOT call create_payment_link or create_order for the purpose "
+            "of taking payment. When a customer wants to buy, acknowledge their "
+            "interest, tell them a team member will reach out with payment "
+            "details, and create a support ticket so the team can follow up. "
+            "Do not invent any payment method or bank details."
+        )
+
+    # Agent tone override — affects the style of all replies.
+    tone = str(s.get("agent_tone", "")).strip()
+    _tone_hints: dict[str, str] = {
+        "friendly_casual": (
+            "Tone: casual and warm. Use contractions, first names, and emojis "
+            "sparingly. This is a chat, not an email."
+        ),
+        "professional": (
+            "Tone: professional and concise. Avoid emojis. Address the customer "
+            "formally until they set a casual register."
+        ),
+        "formal": (
+            "Tone: formal. Use full sentences, avoid slang, address the customer "
+            "as 'you' (not first name unless they give it)."
+        ),
+    }
+    if tone in _tone_hints:
+        sections.append(f"## Communication style\n{_tone_hints[tone]}")
+
+    # Business hours note — stable string so it does not bust cache.
+    bh: dict = s.get("business_hours") or {}
+    if bh.get("start") and bh.get("end"):
+        sections.append(
+            f"## Business hours\n"
+            f"This business operates {bh['start']}–{bh['end']} "
+            f"({bh.get('timezone', 'local time')}). "
+            "If a customer contacts outside these hours, acknowledge the delay "
+            "and assure them the team will respond during business hours."
+        )
 
     if categories:
         sections.append(

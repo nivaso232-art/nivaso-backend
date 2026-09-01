@@ -47,24 +47,27 @@ router = APIRouter(prefix="/webhooks/telegram", tags=["webhooks"])
 
 
 @router.post("")
-async def receive_update(
+async def receive_update_deprecated(
     request: Request,
-    background_tasks: BackgroundTasks,
-    x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ) -> Response:
-    """Inbound Telegram updates — single-tenant / global-config path."""
-    try:
-        verify_telegram_secret(
-            expected=settings.telegram_webhook_secret,
-            header=x_telegram_bot_api_secret_token,
-        )
-    except SignatureError as exc:
-        log.warning("telegram_signature_invalid", error=str(exc))
-        return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+    """DEPRECATED. Register your bot at /webhooks/telegram/{slug} instead.
 
-    payload = await request.json()
-    background_tasks.add_task(_process_telegram_update, payload, business_slug=None, tg_credentials=None)
-    return Response(status_code=status.HTTP_200_OK)
+    Each business now has its own webhook URL that includes its slug.
+    This catch-all route is kept only to return a clear error so misconfigured
+    bots get an actionable message rather than a silent 404.
+    """
+    log.warning(
+        "telegram_webhook_deprecated",
+        hint="Register your Telegram bot webhook at /webhooks/telegram/{slug}",
+    )
+    return Response(
+        status_code=410,
+        content=(
+            b'{"error": "This webhook URL is deprecated. '
+            b'Register your bot at /webhooks/telegram/{business-slug} instead."}'
+        ),
+        media_type="application/json",
+    )
 
 
 @router.post("/{slug}")
@@ -154,9 +157,12 @@ async def _handle_message(
 ) -> None:
     bind_request_context(channel="telegram", external_id=msg.chat_id)
 
-    slug = business_slug or settings.default_business_slug
+    slug = business_slug
     if not slug:
-        log.error("telegram_no_business_slug_configured")
+        log.error(
+            "telegram_no_slug",
+            hint="Use /webhooks/telegram/{slug} — the slug-less route is deprecated",
+        )
         return
 
     try:

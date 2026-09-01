@@ -88,10 +88,10 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
 
     # -- Multi-tenant routing --------------------------------------------
-    # For single-business deployments: the slug of the business that all
-    # inbound webhook messages are routed to. Multi-tenant routing (mapping
-    # phone-number-id or bot-token to a business slug) can be layered on top
-    # when needed.
+    # Deprecated — multi-tenant routing now uses the business_channels table.
+    # Telegram: register bots at /webhooks/telegram/{slug}
+    # WhatsApp: match by phone_number_id from business_channels
+    # Leave this empty for multi-tenant deployments.
     default_business_slug: str = ""
 
     @field_validator("database_url", "database_direct_url")

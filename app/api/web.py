@@ -136,11 +136,11 @@ async def chat(
     session: AsyncSession = Depends(get_session),
 ) -> ChatResponse:
     """Send one message to the agent and get its reply synchronously."""
-    slug = body.business_slug or settings.default_business_slug
+    slug = body.business_slug
     if not slug:
         raise NotFoundError(
-            "No business specified and DEFAULT_BUSINESS_SLUG is unset.",
-            details={"hint": "Pass business_slug in the request body."},
+            "business_slug is required.",
+            details={"hint": "Pass 'business_slug' in the request body, e.g. 'nivaso-gaming'."},
         )
 
     async with UnitOfWork(session):
@@ -231,7 +231,7 @@ async def get_history(
     session: AsyncSession = Depends(get_session),
 ) -> list[HistoryMessage]:
     """Return the TEXT messages for this user's active conversation."""
-    slug = business_slug or settings.default_business_slug
+    slug = business_slug
     if not slug:
         return []
 
@@ -273,7 +273,7 @@ async def list_sessions(
     session: AsyncSession = Depends(get_session),
 ) -> list[SessionOut]:
     """List all WEB chat sessions for a business, newest activity first."""
-    slug = business_slug or settings.default_business_slug
+    slug = business_slug
     if not slug:
         return []
 
@@ -313,3 +313,42 @@ async def list_sessions(
 
     results.sort(key=lambda s: s.last_message_at or "", reverse=True)
     return results
+
+
+class BusinessConfigOut(BaseModel):
+    slug: str
+    name: str
+    razorpay_enabled: bool
+    agent_tone: str
+    business_hours: dict | None
+
+
+@router.get("/config/{slug}", response_model=BusinessConfigOut)
+async def get_business_config(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+) -> BusinessConfigOut:
+    """Public endpoint — returns non-sensitive business config for the chat widget.
+
+    Customer-facing web chat widgets call this to discover which business
+    they're talking to and what features are enabled, without needing the
+    X-Internal-Key header.
+
+    Usage:
+        GET /web/config/nivaso-gaming
+        → { "slug": "nivaso-gaming", "name": "Nivaso Gaming Store",
+            "razorpay_enabled": true, "agent_tone": "friendly_casual", ... }
+    """
+    try:
+        business = await BusinessRepository(session).get_active_or_raise(slug)
+    except NotFoundError:
+        raise NotFoundError("Business not found.", details={"slug": slug})
+
+    s: dict = business.settings or {}
+    return BusinessConfigOut(
+        slug=business.slug,
+        name=business.name,
+        razorpay_enabled=bool(s.get("razorpay_enabled", True)),
+        agent_tone=str(s.get("agent_tone", "friendly_casual")),
+        business_hours=s.get("business_hours") or None,
+    )
