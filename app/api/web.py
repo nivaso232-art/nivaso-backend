@@ -33,6 +33,10 @@ from app.api.deps import get_session
 from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.uow import UnitOfWork
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from app.models.customer import CustomerChannel
 from app.models.enums import Channel, MessageType, SenderType
 from app.repositories.businesses import BusinessRepository
 from app.repositories.conversations import ConversationRepository, MessageRepository
@@ -86,6 +90,13 @@ class ChatResponse(BaseModel):
 class HistoryMessage(BaseModel):
     role: str
     content: str
+
+
+class SessionOut(BaseModel):
+    user_id: str
+    customer_name: str | None
+    conversation_id: str | None
+    last_message_at: str | None
 
 
 def _trailing_tool_calls(history: Any, after_message_id: Any) -> list[ToolCall]:
@@ -244,3 +255,51 @@ async def get_history(
         for msg in messages
         if msg.message_type == MessageType.TEXT and msg.content
     ]
+
+
+@router.get("/sessions", response_model=list[SessionOut])
+async def list_sessions(
+    business_slug: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[SessionOut]:
+    """List all WEB chat sessions for a business, newest activity first."""
+    slug = business_slug or settings.default_business_slug
+    if not slug:
+        return []
+
+    try:
+        business = await BusinessRepository(session).get_active_or_raise(slug)
+    except NotFoundError:
+        return []
+
+    stmt = (
+        select(CustomerChannel)
+        .where(
+            CustomerChannel.business_id == business.id,
+            CustomerChannel.channel == Channel.WEB,
+        )
+        .options(selectinload(CustomerChannel.customer))
+    )
+    channels = (await session.execute(stmt)).scalars().all()
+
+    conv_repo = ConversationRepository(session, business.id)
+    results: list[SessionOut] = []
+    for ch in channels:
+        conv = await conv_repo.get_active_for_channel(ch.id)
+        results.append(
+            SessionOut(
+                user_id=ch.external_user_id,
+                customer_name=(
+                    ch.customer.name or ch.display_name if ch.customer else ch.display_name
+                ),
+                conversation_id=str(conv.id) if conv else None,
+                last_message_at=(
+                    conv.last_message_at.isoformat()
+                    if conv and conv.last_message_at
+                    else None
+                ),
+            )
+        )
+
+    results.sort(key=lambda s: s.last_message_at or "", reverse=True)
+    return results
