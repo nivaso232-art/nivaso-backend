@@ -19,6 +19,8 @@ Register the webhook URL with Telegram once via:
 
 from __future__ import annotations
 
+import uuid
+
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Header, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -108,7 +110,13 @@ async def receive_update_for_business(
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
 
     payload = await request.json()
-    background_tasks.add_task(_process_telegram_update, payload, business_slug=slug, tg_credentials=tg_credentials)
+    background_tasks.add_task(
+        _process_telegram_update,
+        payload,
+        business_slug=slug,
+        business_id=biz.id,
+        tg_credentials=tg_credentials,
+    )
     return Response(status_code=status.HTTP_200_OK)
 
 
@@ -116,6 +124,7 @@ async def _process_telegram_update(
     payload: dict,
     *,
     business_slug: str | None,
+    business_id: uuid.UUID | None = None,
     tg_credentials: dict | None,
 ) -> None:
     """Background processing of a Telegram update."""
@@ -141,7 +150,7 @@ async def _process_telegram_update(
         try:
             await _handle_message(session, msg, business_slug=business_slug, tg_credentials=tg_credentials)
             async with UnitOfWork(session):
-                await webhook_repo.mark_processed(event)
+                await webhook_repo.mark_processed(event, business_id=business_id)
         except Exception as exc:
             log.exception("telegram_processing_failed", error=str(exc))
             async with UnitOfWork(session):

@@ -21,6 +21,8 @@ Two endpoints:
 
 from __future__ import annotations
 
+import uuid
+
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Header, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -125,24 +127,29 @@ async def _process_whatsapp_payload(
                 return
             await webhook_repo.mark_processing(event)
 
+        resolved_business_id: uuid.UUID | None = None
         try:
             for msg in messages:
-                await _handle_message(session, msg)
+                bid = await _handle_message(session, msg)
+                if bid is not None and resolved_business_id is None:
+                    resolved_business_id = bid
 
             async with UnitOfWork(session):
-                await webhook_repo.mark_processed(event)
+                await webhook_repo.mark_processed(event, business_id=resolved_business_id)
         except Exception as exc:
             log.exception("whatsapp_processing_failed", error=str(exc))
             async with UnitOfWork(session):
                 await webhook_repo.mark_failed(event, str(exc))
 
 
-async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
+async def _handle_message(session: AsyncSession, msg: InboundMessage) -> uuid.UUID | None:
     """Resolve context, run the agent turn, send the reply.
 
     Routing: business_channels table — match by phone_number_id (multi-tenant, DB-driven).
     No fallback. Configure the phone number in the admin panel:
       Business → Channels → WhatsApp
+
+    Returns the resolved business_id so the caller can stamp the webhook_event row.
     """
     bind_request_context(channel="whatsapp", external_id=msg.wa_id)
 
@@ -160,7 +167,7 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
                     phone_number_id=msg.phone_number_id,
                     hint="Configure this number: Admin → Business → Channels → WhatsApp",
                 )
-                return
+                return None
 
             business = await businesses.get_or_raise(channel_cfg.business_id)
             wa_credentials = channel_cfg.credentials
@@ -210,7 +217,7 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
             phone_number_id=msg.phone_number_id,
             error=str(exc),
         )
-        return
+        return None
 
     # Run agent turn — the runner opens its own UnitOfWork to commit its writes.
     try:
@@ -243,6 +250,8 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
         log.error("whatsapp_send_failed", to=msg.wa_id, error=str(exc))
     finally:
         clear_request_context()
+
+    return business.id
 
 
 def _map_type(raw: str) -> MessageType:
