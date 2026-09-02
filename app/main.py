@@ -33,7 +33,9 @@ from app.api.admin import (
     support,
     webhook_events,
 )
-from app.api.deps import require_internal_key
+from app.api.super_admin import businesses as super_businesses
+from app.api.super_admin import feature_requests as super_feature_requests
+from app.api.deps import require_internal_key, require_super_admin_key
 from app.api.webhooks import razorpay, telegram, whatsapp
 from app.core.config import settings
 from app.core.db import dispose_engine
@@ -108,6 +110,11 @@ app.include_router(agent_runs.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(channels.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(metrics.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(model_registry.router, prefix="/admin", dependencies=_admin_deps)
+
+# -- Super-admin routes (Nivaso operators only — separate key) ----------------
+_super_deps = [Depends(require_super_admin_key)]
+app.include_router(super_businesses.router, prefix="/super-admin", dependencies=_super_deps)
+app.include_router(super_feature_requests.router, prefix="/super-admin", dependencies=_super_deps)
 
 # -- Web test channel --------------------------------------------------------
 # No auth in local so you can curl /web/chat directly while testing; still

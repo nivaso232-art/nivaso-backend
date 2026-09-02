@@ -19,6 +19,8 @@ import structlog
 from app.agent.context import ToolContext
 from app.core.config import settings
 from app.core.errors import AgentError
+from app.entitlements.flags import FeatureFlag
+from app.entitlements.resolver import allowed_models, allowed_tools, max_iterations
 
 log = structlog.get_logger(__name__)
 
@@ -100,24 +102,56 @@ def _build_single_runner(
 # Public factory
 # ---------------------------------------------------------------------------
 
+async def _load_entitlements(ctx: ToolContext) -> dict[str, Any]:
+    """Load resolved entitlements for the current business (cached on ctx)."""
+    from app.repositories.entitlements import EntitlementRepository
+    repo = EntitlementRepository(ctx.session)
+    return await repo.resolved(ctx.business_id)
+
+
+def _filter_tools(
+    extra_tools: Any,
+    allowed: list[str] | None,
+) -> Any:
+    """Remove tools not in the entitlement allow-list. None = all tools."""
+    if allowed is None:
+        return extra_tools  # unrestricted
+
+    from app.agent.registry import TOOLS
+    from app.agent.tools.base import ToolSpec
+
+    permitted = frozenset(allowed)
+    filtered = tuple(t for t in TOOLS if t.name in permitted)
+
+    # Re-add any caller-supplied extras (admin tools) — those are always allowed.
+    combined = filtered + tuple(extra_tools)
+    return combined
+
+
 def build_agent_runner(
     ctx: ToolContext,
     *,
     provider: str | None = None,
     model: str | None = None,
     admin_mode: bool = False,
+    entitlements: dict[str, Any] | None = None,
 ) -> Any:
-    """Build the correct runner for *ctx*, honouring per-business model config.
+    """Build the correct runner for *ctx*, honouring plan entitlements and
+    per-business model config.
 
-    Callers (webhooks, web endpoint) stay unchanged — they always call this and
-    get back an object with a ``run(**kwargs) -> str`` coroutine.
+    Resolution order:
+      explicit kwargs → business.settings["agent"] → entitlement plan defaults
+      → environment defaults.
+
+    Callers pass ``entitlements`` when they have already loaded them (e.g. web
+    endpoint). Webhook callers leave it None and the factory loads it lazily.
     """
     extra_tools: Any = ()
     if admin_mode:
         from app.agent.tools.admin_knowledge import ADMIN_TOOLS
         extra_tools = ADMIN_TOOLS
 
-    # Per-business override stored in business.settings["agent"]
+    # Per-business model config stored in business.settings["agent"].
     biz_cfg: dict = (ctx.business.settings or {}).get("agent") or {}
 
     eff_provider = provider or biz_cfg.get("provider") or settings.llm_provider
@@ -125,6 +159,19 @@ def build_agent_runner(
 
     fb_provider: str | None = biz_cfg.get("fallback_provider")
     fb_model: str | None = biz_cfg.get("fallback_model")
+
+    # -- Entitlement enforcement --------------------------------------------
+    if entitlements:
+        # Clamp model to the allowed list if one is defined.
+        _allowed_models = allowed_models(entitlements)
+        if _allowed_models is not None and eff_model not in _allowed_models:
+            eff_model = _allowed_models[0] if _allowed_models else None
+        if _allowed_models is not None and fb_model not in _allowed_models:
+            fb_model = None  # fallback model not on plan — disable it
+
+        # Filter tools to the entitlement allow-list.
+        _allowed_tools = allowed_tools(entitlements)
+        extra_tools = _filter_tools(extra_tools, _allowed_tools)
 
     primary = _build_single_runner(eff_provider, eff_model, ctx, extra_tools)
 

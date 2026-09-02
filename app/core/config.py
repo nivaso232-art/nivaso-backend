@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     app_env: Literal["local", "staging", "production"] = "local"
     log_level: str = "INFO"
     internal_api_key: str = "change-me"
+    # Separate key for super-admin routes — Nivaso operators only.
+    super_admin_api_key: str = "super-change-me"
 
     # -- Database ---------------------------------------------------------
     # Pooler (port 6543) for the app; direct (port 5432) for Alembic DDL.
