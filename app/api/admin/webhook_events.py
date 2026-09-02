@@ -47,6 +47,7 @@ async def list_webhook_events(
     source: WebhookSource | None = None,
     status: WebhookStatus | None = None,
     limit: int = 50,
+    offset: int = 0,
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> list[WebhookEventOut]:
@@ -54,6 +55,7 @@ async def list_webhook_events(
         select(WebhookEvent)
         .where(WebhookEvent.business_id == business.id)
         .order_by(WebhookEvent.created_at.desc())
+        .offset(offset)
         .limit(limit)
     )
     if source is not None:
