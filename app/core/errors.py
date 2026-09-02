@@ -90,6 +90,17 @@ class AgentError(AppError):
     code = "agent_error"
 
 
+class ProviderRateLimitError(AgentError):
+    """LLM provider is rate-limited or temporarily overloaded.
+
+    Raised before the generic AgentError wrapper so FallbackAgentRunner can
+    detect it via ``exc.__cause__`` and retry on the fallback model.
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "provider_rate_limit"
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:

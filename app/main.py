@@ -27,6 +27,7 @@ from app.api.admin import (
     fulfillments,
     knowledge,
     metrics,
+    model_registry,
     orders,
     products,
     support,
@@ -68,7 +69,10 @@ register_exception_handlers(app)
 
 # -- CORS (allow the admin frontend in local dev) ----------------------------
 _cors_origins = (
-    ["http://localhost:5173", "http://localhost:3000"]
+    # Allow any localhost port in local dev so Vite's auto-port-increment
+    # (5173, 5174, 5175 …) never breaks CORS.
+    ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175",
+     "http://localhost:3000"]
     if settings.is_local
     else []  # in staging/prod, set origins via a reverse-proxy or extend here
 )
@@ -103,6 +107,7 @@ app.include_router(webhook_events.router, prefix="/admin", dependencies=_admin_d
 app.include_router(agent_runs.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(channels.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(metrics.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(model_registry.router, prefix="/admin", dependencies=_admin_deps)
 
 # -- Web test channel --------------------------------------------------------
 # No auth in local so you can curl /web/chat directly while testing; still

@@ -392,7 +392,7 @@ class GeminiAgentRunner:
                 latency_ms = int((time.monotonic() - started_at) * 1000)
                 run = AgentRun(
                     conversation_id=self.ctx.conversation_id,
-                    model=settings.gemini_model,
+                    model=self.model,
                     effort=settings.agent_effort,
                     input_tokens=total_input,
                     output_tokens=total_output,
