@@ -1,7 +1,13 @@
-"""Admin API — business management.
+"""Admin API — business management for a business's own admin.
 
-All routes require the X-Internal-Key header (enforced at the router level
-in ``main.py``). No customer-facing auth is used here.
+Every route here is scoped to a single business via the {slug} path param.
+Routes are protected by ``require_admin_auth`` (JWT or X-Internal-Key,
+enforced at the router level in ``main.py``), which also checks that a
+business-admin JWT's business_slug claim matches the {slug} in the URL.
+
+Listing/creating businesses platform-wide lives exclusively under
+``/super-admin/businesses`` — that flow also provisions the new business's
+login credentials, which nothing in this module does.
 """
 
 from __future__ import annotations
@@ -15,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session
 from app.core.errors import NotFoundError
 from app.core.uow import UnitOfWork
-from app.entitlements.flags import FeatureFlag
+from app.entitlements.flags import MIGRATION_PENDING_FLAGS, FeatureFlag
 from app.entitlements.resolver import resolve
 from app.models.business import Business
 from app.models.enums import BusinessStatus
@@ -52,14 +58,6 @@ class BusinessOut(BaseModel):
         )
 
 
-class CreateBusinessIn(BaseModel):
-    slug: str
-    name: str
-    description: str | None = None
-    timezone: str = "Asia/Kolkata"
-    settings: dict[str, Any] = {}
-
-
 class UpdateBusinessIn(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -69,34 +67,6 @@ class UpdateBusinessIn(BaseModel):
 
 
 # -- routes -------------------------------------------------------------------
-
-@router.get("", response_model=list[BusinessOut])
-async def list_businesses(
-    session: AsyncSession = Depends(get_session),
-) -> list[BusinessOut]:
-    repo = BusinessRepository(session)
-    businesses = await repo.list_all()
-    return [BusinessOut.from_orm(b) for b in businesses]
-
-
-@router.post("", response_model=BusinessOut, status_code=status.HTTP_201_CREATED)
-async def create_business(
-    body: CreateBusinessIn,
-    session: AsyncSession = Depends(get_session),
-) -> BusinessOut:
-    business = Business(
-        slug=body.slug,
-        name=body.name,
-        description=body.description,
-        timezone=body.timezone,
-        status=BusinessStatus.ACTIVE,
-        settings=body.settings,
-    )
-    async with UnitOfWork(session):
-        repo = BusinessRepository(session)
-        await repo.add(business)
-    return BusinessOut.from_orm(business)
-
 
 @router.get("/{slug}", response_model=BusinessOut)
 async def get_business(
@@ -145,9 +115,18 @@ async def get_entitlements(
     """
     biz_repo = BusinessRepository(session)
     biz = await biz_repo.get_by_slug_or_raise(slug)
-    ent_repo = EntitlementRepository(session)
-    ent = await ent_repo.get_or_create(biz.id)
-    return {"plan": ent.plan, "flags": resolve(ent.plan, ent.overrides)}
+    # Use an isolated session so the main request session is never left in
+    # a broken state when the business_entitlements table doesn't exist yet.
+    from app.core.db import SessionFactory
+    try:
+        async with SessionFactory() as iso:
+            ent = await EntitlementRepository(iso).get_or_create(biz.id)
+            await iso.commit()
+            return {"plan": ent.plan, "flags": resolve(ent.plan, ent.overrides)}
+    except Exception:
+        # Migrations not yet applied — return enterprise-level flags so no
+        # existing functionality is lost while migrations are pending.
+        return {"plan": "migration_pending", "flags": MIGRATION_PENDING_FLAGS}
 
 
 # ── Feature requests (raised by client-admin) ─────────────────────────────────
@@ -175,15 +154,24 @@ async def submit_feature_request(
     """Submit a feature access request for super-admin review."""
     biz_repo = BusinessRepository(session)
     biz = await biz_repo.get_by_slug_or_raise(slug)
-    fr_repo = FeatureRequestRepository(session)
-    async with UnitOfWork(session):
-        req = await fr_repo.create(
-            business_id=biz.id, feature=body.feature, reason=body.reason,
+    from app.core.db import SessionFactory
+    try:
+        async with SessionFactory() as iso:
+            fr_repo = FeatureRequestRepository(iso)
+            async with UnitOfWork(iso):
+                req = await fr_repo.create(
+                    business_id=biz.id, feature=body.feature, reason=body.reason,
+                )
+            return FeatureRequestOut(
+                id=str(req.id), feature=req.feature, reason=req.reason,
+                status=req.status, notes=req.notes, created_at=req.created_at.isoformat(),
+            )
+    except Exception:
+        from app.core.errors import ForbiddenError
+        raise ForbiddenError(
+            "Feature requests are unavailable until migrations are applied.",
+            details={"hint": "Run: alembic upgrade head"},
         )
-    return FeatureRequestOut(
-        id=str(req.id), feature=req.feature, reason=req.reason,
-        status=req.status, notes=req.notes, created_at=req.created_at.isoformat(),
-    )
 
 
 @router.get("/{slug}/feature-requests", response_model=list[FeatureRequestOut])
@@ -194,12 +182,16 @@ async def list_feature_requests(
     """List this business's own feature requests and their review status."""
     biz_repo = BusinessRepository(session)
     biz = await biz_repo.get_by_slug_or_raise(slug)
-    fr_repo = FeatureRequestRepository(session)
-    requests = await fr_repo.list_for_business(biz.id)
-    return [
-        FeatureRequestOut(
-            id=str(r.id), feature=r.feature, reason=r.reason,
-            status=r.status, notes=r.notes, created_at=r.created_at.isoformat(),
-        )
-        for r in requests
-    ]
+    from app.core.db import SessionFactory
+    try:
+        async with SessionFactory() as iso:
+            requests = await FeatureRequestRepository(iso).list_for_business(biz.id)
+            return [
+                FeatureRequestOut(
+                    id=str(r.id), feature=r.feature, reason=r.reason,
+                    status=r.status, notes=r.notes, created_at=r.created_at.isoformat(),
+                )
+                for r in requests
+            ]
+    except Exception:
+        return []  # Table not yet created

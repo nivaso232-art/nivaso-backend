@@ -1,28 +1,43 @@
 """Admin API — per-business channel configuration.
 
-GET  /admin/{slug}/channels                  → list all configured channels
-PUT  /admin/{slug}/channels/telegram         → create or update Telegram config
-PUT  /admin/{slug}/channels/whatsapp         → create or update WhatsApp config
-DELETE /admin/{slug}/channels/{channel_type} → remove a channel config
+Each PUT checks the business's plan entitlement before allowing the write.
+A business on the free tier cannot configure WhatsApp even if they supply
+valid credentials — they must upgrade or have the flag granted by super-admin.
 """
 
 from __future__ import annotations
-
-import uuid
-from typing import Any
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_business, get_session
-from app.core.errors import NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError
 from app.core.uow import UnitOfWork
+from app.entitlements.flags import FeatureFlag
+from app.entitlements.resolver import check, resolve
 from app.models.business import Business
 from app.models.business_channel import BusinessChannel
 from app.repositories.business_channels import BusinessChannelRepository
+from app.repositories.entitlements import EntitlementRepository
 
 router = APIRouter(prefix="/{slug}/channels", tags=["admin:channels"])
+
+
+# ── Entitlement guard ─────────────────────────────────────────────────────────
+
+async def _require_channel(
+    session: AsyncSession, business: Business, flag: str
+) -> None:
+    """Raise 403 if this channel is not in the business's plan."""
+    ent_repo = EntitlementRepository(session)
+    ent = await ent_repo.get_or_create(business.id)
+    resolved = resolve(ent.plan, ent.overrides)
+    if not check(resolved, flag):
+        raise ForbiddenError(
+            "This channel is not included in your current plan.",
+            details={"flag": flag, "plan": ent.plan},
+        )
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -32,7 +47,6 @@ class ChannelOut(BaseModel):
     external_channel_id: str
     is_active: bool
     configured: bool
-    # Webhook URL template — caller substitutes their public backend host.
     webhook_url_path: str
 
     @classmethod
@@ -90,15 +104,9 @@ async def configure_telegram(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> ChannelOut:
-    """Create or update the Telegram bot config for this business.
-
-    external_channel_id is the numeric bot ID (the part before ':' in the token).
-    """
+    await _require_channel(session, business, FeatureFlag.CHANNEL_TELEGRAM)
     bot_id = body.bot_token.split(":")[0] if ":" in body.bot_token else body.bot_token
-    credentials = {
-        "bot_token": body.bot_token,
-        "webhook_secret": body.webhook_secret,
-    }
+    credentials = {"bot_token": body.bot_token, "webhook_secret": body.webhook_secret}
     repo = BusinessChannelRepository(session)
     async with UnitOfWork(session):
         channel = await repo.upsert(
@@ -117,7 +125,7 @@ async def configure_whatsapp(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> ChannelOut:
-    """Create or update the WhatsApp config for this business."""
+    await _require_channel(session, business, FeatureFlag.CHANNEL_WHATSAPP)
     credentials = {
         "phone_number_id": body.phone_number_id,
         "access_token": body.access_token,
@@ -142,11 +150,7 @@ async def configure_razorpay(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> ChannelOut:
-    """Create or update the Razorpay config for this business.
-
-    Each business gets its own webhook URL: /webhooks/razorpay/{slug}.
-    Register that URL in the Razorpay dashboard for this merchant account.
-    """
+    await _require_channel(session, business, FeatureFlag.CHANNEL_PAYMENTS)
     credentials = {
         "key_id": body.key_id,
         "key_secret": body.key_secret,

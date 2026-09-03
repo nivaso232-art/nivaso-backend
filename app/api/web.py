@@ -59,7 +59,7 @@ class ChatRequest(BaseModel):
     )
     business_slug: str | None = Field(
         default=None,
-        description="Which tenant to talk to. Falls back to DEFAULT_BUSINESS_SLUG.",
+        description="Which tenant to talk to. Required — there is no default.",
     )
     display_name: str | None = Field(default=None)
     provider: str | None = Field(
@@ -186,11 +186,23 @@ async def chat(
         customer=customer,
         conversation=conversation,
     )
+
+    # Load entitlements to enforce plan restrictions on AI tools/models.
+    # Use an isolated session so this read doesn't join the outer transaction.
+    from app.repositories.entitlements import EntitlementRepository
+    try:
+        from app.core.db import SessionFactory
+        async with SessionFactory() as ent_session:
+            ents = await EntitlementRepository(ent_session).resolved(business.id)
+    except Exception:
+        ents = None
+
     runner = build_agent_runner(
         ctx,
         provider=body.provider,
         model=body.model,
         admin_mode=body.admin_mode,
+        entitlements=ents,
     )
     reply = await runner.run(
         history=history,
