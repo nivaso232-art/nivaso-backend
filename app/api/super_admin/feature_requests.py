@@ -46,7 +46,10 @@ async def list_feature_requests(
     fr_repo = FeatureRequestRepository(session)
     biz_repo = BusinessRepository(session)
 
-    requests = await fr_repo.list_all(status=status)
+    try:
+        requests = await fr_repo.list_all(status=status)
+    except Exception:
+        return []  # Table may not exist yet
     businesses = {b.id: b for b in await biz_repo.list_all()}
 
     return [
@@ -108,6 +111,17 @@ async def review_feature_request(
             await ent_repo.set_overrides(
                 req.business_id, new_overrides, granted_by="super-admin"
             )
+
+        # Audit trail
+        try:
+            from app.repositories.audit_log import AuditLogRepository
+            await AuditLogRepository(session).record(
+                business_id=req.business_id,
+                action=f"request_{body.status}",
+                details={"feature": req.feature, "notes": body.notes},
+            )
+        except Exception:
+            pass
 
     biz_repo = BusinessRepository(session)
     business = await biz_repo.get_or_raise(req.business_id)
