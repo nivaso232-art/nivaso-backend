@@ -75,6 +75,103 @@ async def get_product(ctx: ToolContext, product_id: str) -> dict[str, Any]:
     return _serialize(product)
 
 
+async def compare_products(
+    ctx: ToolContext, product_ids: list[str]
+) -> dict[str, Any]:
+    """Fetch 2–4 products side-by-side so the customer can choose."""
+    if len(product_ids) < 2 or len(product_ids) > 4:
+        return {"error": "Provide between 2 and 4 product_id values to compare."}
+
+    products = []
+    for raw_id in product_ids:
+        try:
+            pid = uuid.UUID(str(raw_id))
+        except ValueError:
+            return {"error": f"Invalid product_id: {raw_id!r}. Use IDs from search_products."}
+        try:
+            product = await ctx.catalog.get_product_or_raise(pid)
+            products.append(_serialize(product))
+        except Exception:
+            return {"error": f"Product {raw_id!r} not found."}
+
+    return {"count": len(products), "products": products}
+
+
+COMPARE_PRODUCTS = ToolSpec(
+    name="compare_products",
+    description=(
+        "Fetch 2 to 4 products side-by-side (price, description, attributes) so "
+        "the customer can decide which one to buy. Use this when a customer asks "
+        "'which is better, X or Y?' after a search. All product_id values must come "
+        "from a prior search_products or get_product call."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "product_ids": {
+                "type": "array",
+                "description": "2 to 4 product_id UUIDs from search_products.",
+                "minItems": 2,
+                "maxItems": 4,
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["product_ids"],
+        "additionalProperties": False,
+    },
+    handler=compare_products,
+)
+
+
+async def check_product_availability(
+    ctx: ToolContext, product_id: str
+) -> dict[str, Any]:
+    """Report how many credential slots are in stock for a product."""
+    try:
+        pid = uuid.UUID(str(product_id))
+    except ValueError:
+        return {"error": f"Invalid product_id: {product_id!r}."}
+
+    try:
+        product = await ctx.catalog.get_product_or_raise(pid)
+    except Exception:
+        return {"error": f"Product {product_id!r} not found."}
+
+    try:
+        slots = await ctx.credentials.free_slots(pid)
+        return {
+            "product_id": product_id,
+            "product_name": product.name,
+            "available_slots": slots,
+            "in_stock": slots > 0,
+        }
+    except Exception:
+        return {
+            "product_id": product_id,
+            "product_name": product.name,
+            "available_slots": None,
+            "note": "Availability tracking is not configured for this product.",
+        }
+
+
+CHECK_PRODUCT_AVAILABILITY = ToolSpec(
+    name="check_product_availability",
+    description=(
+        "Check whether a product is in stock (has available credential slots) before "
+        "the customer commits to buying. Use this when the customer asks 'is it "
+        "available?' or 'do you have stock?' to avoid an out-of-stock post-order."
+    ),
+    input_schema=schema(
+        properties={
+            "product_id": string_prop(
+                "The product_id UUID from search_products or get_product."
+            ),
+        }
+    ),
+    handler=check_product_availability,
+)
+
+
 SEARCH_PRODUCTS = ToolSpec(
     name="search_products",
     description=(

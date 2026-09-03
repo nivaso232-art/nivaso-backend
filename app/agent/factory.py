@@ -89,13 +89,24 @@ def _build_single_runner(
     model: str | None,
     ctx: ToolContext,
     extra_tools: Any,
+    *,
+    allowed_tool_names: frozenset[str] | None = None,
+    max_iterations_override: int | None = None,
 ) -> Any:
     if provider == "gemini":
         from app.agent.gemini_runner import GeminiAgentRunner
-        return GeminiAgentRunner(ctx, model=model, extra_tools=extra_tools)
+        return GeminiAgentRunner(
+            ctx, model=model, extra_tools=extra_tools,
+            allowed_tool_names=allowed_tool_names,
+            max_iterations_override=max_iterations_override,
+        )
 
     from app.agent.runner import AgentRunner
-    return AgentRunner(ctx, model=model, extra_tools=extra_tools)
+    return AgentRunner(
+        ctx, model=model, extra_tools=extra_tools,
+        allowed_tool_names=allowed_tool_names,
+        max_iterations_override=max_iterations_override,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -107,25 +118,6 @@ async def _load_entitlements(ctx: ToolContext) -> dict[str, Any]:
     from app.repositories.entitlements import EntitlementRepository
     repo = EntitlementRepository(ctx.session)
     return await repo.resolved(ctx.business_id)
-
-
-def _filter_tools(
-    extra_tools: Any,
-    allowed: list[str] | None,
-) -> Any:
-    """Remove tools not in the entitlement allow-list. None = all tools."""
-    if allowed is None:
-        return extra_tools  # unrestricted
-
-    from app.agent.registry import TOOLS
-    from app.agent.tools.base import ToolSpec
-
-    permitted = frozenset(allowed)
-    filtered = tuple(t for t in TOOLS if t.name in permitted)
-
-    # Re-add any caller-supplied extras (admin tools) — those are always allowed.
-    combined = filtered + tuple(extra_tools)
-    return combined
 
 
 def build_agent_runner(
@@ -149,7 +141,8 @@ def build_agent_runner(
     extra_tools: Any = ()
     if admin_mode:
         from app.agent.tools.admin_knowledge import ADMIN_TOOLS
-        extra_tools = ADMIN_TOOLS
+        from app.agent.tools.admin_support import ADMIN_SUPPORT_TOOLS
+        extra_tools = ADMIN_TOOLS + ADMIN_SUPPORT_TOOLS
 
     # Per-business model config stored in business.settings["agent"].
     biz_cfg: dict = (ctx.business.settings or {}).get("agent") or {}
@@ -161,6 +154,9 @@ def build_agent_runner(
     fb_model: str | None = biz_cfg.get("fallback_model")
 
     # -- Entitlement enforcement --------------------------------------------
+    allowed_tool_names: frozenset[str] | None = None
+    max_iter_override: int | None = None
+
     if entitlements:
         # Clamp model to the allowed list if one is defined.
         _allowed_models = allowed_models(entitlements)
@@ -169,14 +165,25 @@ def build_agent_runner(
         if _allowed_models is not None and fb_model not in _allowed_models:
             fb_model = None  # fallback model not on plan — disable it
 
-        # Filter tools to the entitlement allow-list.
+        # Resolve tool and iteration limits from the plan.
         _allowed_tools = allowed_tools(entitlements)
-        extra_tools = _filter_tools(extra_tools, _allowed_tools)
+        if _allowed_tools is not None:
+            allowed_tool_names = frozenset(_allowed_tools)
 
-    primary = _build_single_runner(eff_provider, eff_model, ctx, extra_tools)
+        max_iter_override = max_iterations(entitlements)
+
+    primary = _build_single_runner(
+        eff_provider, eff_model, ctx, extra_tools,
+        allowed_tool_names=allowed_tool_names,
+        max_iterations_override=max_iter_override,
+    )
 
     if fb_provider and fb_model:
-        fallback = _build_single_runner(fb_provider, fb_model, ctx, extra_tools)
+        fallback = _build_single_runner(
+            fb_provider, fb_model, ctx, extra_tools,
+            allowed_tool_names=allowed_tool_names,
+            max_iterations_override=max_iter_override,
+        )
         return FallbackAgentRunner(primary, fallback)
 
     return primary

@@ -89,6 +89,62 @@ async def get_my_credentials(
     }
 
 
+async def get_fulfillment_details(
+    ctx: ToolContext, order_reference: str | None = None
+) -> dict[str, Any]:
+    """Return the full fulfillment record for an order.
+
+    More detailed than get_order_status — includes the fulfilled_at timestamp,
+    delivery notes, and the count of credentials dispatched. Use when the
+    customer wants specifics about their delivery beyond just the status.
+    """
+    order = await ctx.orders.resolve_order(
+        customer_id=ctx.customer_id,
+        reference=normalize_reference(order_reference) if order_reference else None,
+    )
+
+    fulfillment = await ctx.fulfillment.status_for_order(order.id)
+    if fulfillment is None:
+        return {
+            "order_reference": order.reference,
+            "fulfillment_status": None,
+            "note": (
+                "No fulfillment record yet. The order may not have been paid, "
+                "or delivery is still being prepared."
+            ),
+        }
+
+    metadata = fulfillment.metadata_ or {}
+    return {
+        "order_reference": order.reference,
+        "fulfillment_status": fulfillment.status.value,
+        "is_delivered": fulfillment.is_delivered,
+        "fulfilled_at": fulfillment.fulfilled_at.isoformat() if fulfillment.fulfilled_at else None,
+        "notes": fulfillment.notes,
+        "items_delivered": len(metadata.get("credential_refs", [])),
+    }
+
+
+GET_FULFILLMENT_DETAILS = ToolSpec(
+    name="get_fulfillment_details",
+    description=(
+        "Return the full fulfillment record for the customer's order: delivery status, "
+        "timestamp, and how many items were dispatched. More detailed than "
+        "get_order_status. Use when the customer asks for specifics about their "
+        "delivery. Omit order_reference for their most recent order."
+    ),
+    input_schema=schema(
+        properties={
+            "order_reference": string_prop(
+                "Order reference, or null for the customer's most recent order.",
+                nullable=True,
+            ),
+        }
+    ),
+    handler=get_fulfillment_details,
+)
+
+
 GET_MY_CREDENTIALS = ToolSpec(
     name="get_my_credentials",
     description=(

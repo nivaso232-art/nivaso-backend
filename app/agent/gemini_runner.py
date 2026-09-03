@@ -208,15 +208,20 @@ class GeminiAgentRunner:
         *,
         model: str | None = None,
         extra_tools: Sequence[ToolSpec] = (),
+        allowed_tool_names: frozenset[str] | None = None,
+        max_iterations_override: int | None = None,
     ) -> None:
         self.ctx = ctx
         self.model = model or settings.gemini_model
         self.extra_tools = extra_tools
         self.admin_mode = bool(extra_tools)
-        self._tools_by_name = {
-            **TOOLS_BY_NAME,
-            **{t.name: t for t in extra_tools},
-        }
+        self.allowed_tool_names = allowed_tool_names
+        self.max_iterations_override = max_iterations_override
+        # Restrict base registry to allowed tools when entitlements are enforced.
+        base_registry = TOOLS_BY_NAME
+        if allowed_tool_names is not None:
+            base_registry = {k: v for k, v in TOOLS_BY_NAME.items() if k in allowed_tool_names}
+        self._tools_by_name = {**base_registry, **{t.name: t for t in extra_tools}}
 
     async def run(
         self,
@@ -258,10 +263,13 @@ class GeminiAgentRunner:
             )
         )
 
+        base_decls = _function_declarations()
+        if self.allowed_tool_names is not None:
+            base_decls = [d for d in base_decls if d.name in self.allowed_tool_names]
         config = types.GenerateContentConfig(
             system_instruction=system_text,
             tools=[types.Tool(
-                function_declarations=_function_declarations() + [
+                function_declarations=base_decls + [
                     types.FunctionDeclaration(
                         name=t.name,
                         description=t.description,
@@ -288,7 +296,7 @@ class GeminiAgentRunner:
 
         try:
             async with UnitOfWork(self.ctx.session):
-                while iterations < settings.agent_max_iterations:
+                while iterations < (self.max_iterations_override or settings.agent_max_iterations):
                     iterations += 1
 
                     response = await _client.aio.models.generate_content(

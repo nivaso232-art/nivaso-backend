@@ -158,6 +158,75 @@ async def check_payment_status(
     }
 
 
+async def retry_payment(ctx: ToolContext, order_reference: str) -> dict[str, Any]:
+    """Issue a fresh payment link for an order whose previous attempt failed.
+
+    Validates that the order is in a retryable state before delegating to the
+    same link-creation logic used by create_payment_link.
+    """
+    from app.models.enums import OrderStatus
+
+    order = await ctx.orders.resolve_order(
+        customer_id=ctx.customer_id,
+        reference=normalize_reference(order_reference),
+    )
+
+    if order.is_paid:
+        return {
+            "order_reference": order.reference,
+            "error": "This order is already paid — no retry needed.",
+        }
+
+    retryable = {OrderStatus.PAYMENT_FAILED, OrderStatus.PAYMENT_PENDING}
+    if order.status not in retryable:
+        return {
+            "order_reference": order.reference,
+            "error": (
+                f"Cannot retry payment for an order in '{order.status.value}' state. "
+                "The order must have had a previous payment attempt (PAYMENT_FAILED or PAYMENT_PENDING)."
+            ),
+        }
+
+    # Reuse create_payment_link which handles mock vs. Razorpay, creates a new
+    # payment attempt, and marks the order PAYMENT_PENDING.
+    return await create_payment_link(ctx, order.reference)
+
+
+async def get_order_payment_history(
+    ctx: ToolContext, order_reference: str | None = None
+) -> dict[str, Any]:
+    """Return the full payment attempt audit trail for an order.
+
+    Surfaces every attempt — PENDING, FAILED, and SUCCESS — with timestamps
+    and failure reasons. Useful when the customer says they tried paying
+    multiple times and wants a detailed breakdown.
+    """
+    order = await ctx.orders.resolve_order(
+        customer_id=ctx.customer_id,
+        reference=normalize_reference(order_reference) if order_reference else None,
+    )
+
+    attempts = await ctx.payments.payments.list_for_order(order.id)
+
+    return {
+        "order_reference": order.reference,
+        "order_status": order.status.value,
+        "is_paid": order.is_paid,
+        "total": str(order.total),
+        "currency": order.currency,
+        "attempt_count": len(attempts),
+        "attempts": [
+            {
+                "status": a.status.value,
+                "amount": str(a.amount) if a.amount else None,
+                "failure_reason": a.failure_reason,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in attempts
+        ],
+    }
+
+
 CREATE_PAYMENT_LINK = ToolSpec(
     name="create_payment_link",
     description=(
@@ -174,6 +243,43 @@ CREATE_PAYMENT_LINK = ToolSpec(
         }
     ),
     handler=create_payment_link,
+)
+
+RETRY_PAYMENT = ToolSpec(
+    name="retry_payment",
+    description=(
+        "Generate a fresh payment link for an order whose previous payment attempt "
+        "failed or expired. Use when check_payment_status shows a FAILED attempt and "
+        "the customer wants to try again. The amount is still read from the order — "
+        "you cannot change it."
+    ),
+    input_schema=schema(
+        properties={
+            "order_reference": string_prop(
+                'The order reference to retry payment for, e.g. "ORD-2608-7F3K9Q".'
+            ),
+        }
+    ),
+    handler=retry_payment,
+)
+
+GET_ORDER_PAYMENT_HISTORY = ToolSpec(
+    name="get_order_payment_history",
+    description=(
+        "Return every payment attempt for an order — pending, failed, and successful — "
+        "with timestamps and failure reasons. Use this when the customer says they tried "
+        "paying multiple times and wants a full breakdown. Omit order_reference to use "
+        "the customer's latest open order."
+    ),
+    input_schema=schema(
+        properties={
+            "order_reference": string_prop(
+                "Order reference, or null for the customer's latest open order.",
+                nullable=True,
+            ),
+        }
+    ),
+    handler=get_order_payment_history,
 )
 
 CHECK_PAYMENT_STATUS = ToolSpec(
