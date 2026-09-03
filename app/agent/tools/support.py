@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.agent.context import ToolContext
-from app.agent.tools.base import ToolSpec, enum_prop, schema, string_prop
+from app.agent.tools.base import ToolSpec, enum_prop, integer_prop, schema, string_prop
 from app.core.ids import normalize_reference
 from app.models.enums import ConversationState, TicketPriority
 

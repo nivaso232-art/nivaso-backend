@@ -12,7 +12,7 @@ import uuid
 from typing import Any
 
 from app.agent.context import ToolContext
-from app.agent.tools.base import ToolSpec, schema, string_prop
+from app.agent.tools.base import ToolSpec, integer_prop, schema, string_prop
 from app.core.errors import ValidationError
 from app.core.ids import normalize_reference
 from app.models.enums import ConversationState
