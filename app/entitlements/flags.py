@@ -13,6 +13,17 @@ without moving plans.
 
 ``None`` on a list-type flag means *unrestricted* (all values allowed).
 ``None`` on a numeric flag means *unlimited / use the system setting*.
+
+Dashboard widget notes
+──────────────────────
+``DASHBOARD_WIDGET_CATALOG`` is the complete ordered set of widget keys. The
+former "basic" widgets (products, customers, tickets, revenue) are now first-
+class catalog entries governed by ``ui.dashboard_widgets`` just like the
+advanced ones — there is no hardcoded always-on tier any more.
+
+``WIDGET_DEPENDENCIES`` maps a widget key to the feature flag that must be
+truthy before the widget may appear, regardless of what the plan allows. This
+is enforced server-side on every GET/PATCH so it cannot be bypassed.
 """
 
 from __future__ import annotations
@@ -50,9 +61,61 @@ class FeatureFlag:
     CREDENTIALS_ENABLED = "credentials.enabled"
 
     # ── Client-admin UI visibility ───────────────────────────────────────────
-    UI_ANALYTICS = "ui.analytics"
     UI_AGENT_RUNS = "ui.agent_runs"
     UI_WEBHOOK_EVENTS = "ui.webhook_events"
+
+    # ── Dashboard customization ──────────────────────────────────────────────
+    # Whether this business can pick which widgets to show.
+    UI_DASHBOARD_CUSTOMIZE = "ui.dashboard_customize"
+    # Subset of DASHBOARD_WIDGET_CATALOG keys this plan may enable.
+    # None = all widgets allowed (unrestricted).
+    UI_DASHBOARD_WIDGETS = "ui.dashboard_widgets"
+
+
+# Complete ordered catalog of dashboard widget keys. Order here determines
+# display order on the dashboard (basics first, advanced after). Keys are
+# stable identifiers — never rename one without a migration to rewrite
+# existing selections in business.settings["dashboard"]["widgets"].
+DASHBOARD_WIDGET_CATALOG: dict[str, str] = {
+    # ── Formerly always-on basics — now plan-controlled like everything else ─
+    "stat.products":           "Active Products",
+    "stat.customers":          "Customers",
+    "stat.open_tickets":       "Open Tickets",
+    "stat.products_delivered": "Products Delivered",
+    "chart.revenue":           "Revenue",
+    # ── Advanced ────────────────────────────────────────────────────────────
+    "stat.active_sessions":    "Active Sessions",
+    "stat.agent_runs_today":   "Agent Runs Today",
+    "stat.published_articles": "Published Articles",
+    "chart.agent_runs_7d":     "Agent Runs (7-day)",
+    "chart.ticket_status":     "Ticket Status",
+    "chart.product_catalog":   "Product Catalog Breakdown",
+    "chart.token_usage":       "Token Usage (7-day)",
+    "chart.ticket_priority":   "Open Ticket Priority",
+}
+
+# The subset that used to be hardcoded/always-on. Kept as a frozenset so the
+# dashboard endpoint can detect pre-unification saved selections and migrate
+# them transparently without a data migration.
+DASHBOARD_BASIC_WIDGET_KEYS: frozenset[str] = frozenset({
+    "stat.products",
+    "stat.customers",
+    "stat.open_tickets",
+    "stat.products_delivered",
+    "chart.revenue",
+})
+
+# Widget key → feature flag that must be truthy for the widget to appear.
+# Enforced server-side on every GET/PATCH; cannot be bypassed by plan config.
+# Absence means no dependency (widget shows whenever the plan allows it).
+WIDGET_DEPENDENCIES: dict[str, str] = {
+    "stat.open_tickets":       FeatureFlag.SUPPORT_TICKETS_ENABLED,
+    "stat.agent_runs_today":   FeatureFlag.UI_AGENT_RUNS,
+    "chart.agent_runs_7d":     FeatureFlag.UI_AGENT_RUNS,
+    "chart.token_usage":       FeatureFlag.UI_AGENT_RUNS,
+    "chart.ticket_status":     FeatureFlag.SUPPORT_TICKETS_ENABLED,
+    "chart.ticket_priority":   FeatureFlag.SUPPORT_TICKETS_ENABLED,
+}
 
 
 # ── Plan defaults ────────────────────────────────────────────────────────────
@@ -66,10 +129,22 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.AI_CUSTOM_MODEL_PICKER: False,
         FeatureFlag.AI_MAX_ITERATIONS: 3,
         FeatureFlag.AI_TOOLS: [
+            # ── discovery ──────────────────────────────────────────────────
             "search_products",
             "get_product",
+            # ── orders ─────────────────────────────────────────────────────
+            "create_order",
+            "get_order_status",
+            "cancel_order",
+            # ── payments ───────────────────────────────────────────────────
+            "create_payment_link",
+            "check_payment_status",
+            # ── knowledge ──────────────────────────────────────────────────
             "search_knowledge",
+            # ── support ────────────────────────────────────────────────────
             "create_support_ticket",
+            # ── delivery ───────────────────────────────────────────────────
+            "get_my_credentials",
         ],
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: False,
@@ -80,21 +155,41 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.ORDERS_ENABLED: False,
         FeatureFlag.SUPPORT_TICKETS_ENABLED: True,
         FeatureFlag.CREDENTIALS_ENABLED: False,
-        FeatureFlag.UI_ANALYTICS: False,
         FeatureFlag.UI_AGENT_RUNS: False,
         FeatureFlag.UI_WEBHOOK_EVENTS: False,
+        FeatureFlag.UI_DASHBOARD_CUSTOMIZE: False,
+        FeatureFlag.UI_DASHBOARD_WIDGETS: [
+            "stat.products",
+            "stat.customers",
+            "stat.open_tickets",
+            "stat.products_delivered",
+            "chart.revenue",
+        ],
     },
     "starter": {
         FeatureFlag.AI_MODELS: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         FeatureFlag.AI_CUSTOM_MODEL_PICKER: False,
         FeatureFlag.AI_MAX_ITERATIONS: 5,
         FeatureFlag.AI_TOOLS: [
+            # ── discovery ──────────────────────────────────────────────────
             "search_products",
             "get_product",
+            "compare_products",           # new: Starter+
+            # ── orders ─────────────────────────────────────────────────────
             "create_order",
+            "list_my_orders",             # new: Starter+
             "get_order_status",
+            "cancel_order",
+            # ── payments ───────────────────────────────────────────────────
+            "create_payment_link",
+            "check_payment_status",
+            # ── knowledge ──────────────────────────────────────────────────
             "search_knowledge",
+            "get_full_article",           # new: Starter+
+            # ── support ────────────────────────────────────────────────────
             "create_support_ticket",
+            # ── delivery ───────────────────────────────────────────────────
+            "get_my_credentials",
         ],
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: False,
@@ -105,9 +200,16 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.ORDERS_ENABLED: True,
         FeatureFlag.SUPPORT_TICKETS_ENABLED: True,
         FeatureFlag.CREDENTIALS_ENABLED: False,
-        FeatureFlag.UI_ANALYTICS: True,
         FeatureFlag.UI_AGENT_RUNS: False,
         FeatureFlag.UI_WEBHOOK_EVENTS: False,
+        FeatureFlag.UI_DASHBOARD_CUSTOMIZE: False,
+        FeatureFlag.UI_DASHBOARD_WIDGETS: [
+            "stat.products",
+            "stat.customers",
+            "stat.open_tickets",
+            "stat.products_delivered",
+            "chart.revenue",
+        ],
     },
     "pro": {
         FeatureFlag.AI_MODELS: [
@@ -120,15 +222,29 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.AI_CUSTOM_MODEL_PICKER: True,
         FeatureFlag.AI_MAX_ITERATIONS: 8,
         FeatureFlag.AI_TOOLS: [
+            # ── discovery ──────────────────────────────────────────────────
             "search_products",
             "get_product",
+            "compare_products",
+            "check_product_availability", # new: Pro+
+            # ── orders ─────────────────────────────────────────────────────
             "create_order",
+            "list_my_orders",
             "get_order_status",
             "cancel_order",
+            "get_fulfillment_details",    # new: Pro+
+            # ── payments ───────────────────────────────────────────────────
             "create_payment_link",
             "check_payment_status",
+            "get_order_payment_history",  # new: Pro+
+            "retry_payment",              # new: Pro+
+            # ── knowledge ──────────────────────────────────────────────────
             "search_knowledge",
+            "get_full_article",
+            # ── support ────────────────────────────────────────────────────
             "create_support_ticket",
+            # ── delivery ───────────────────────────────────────────────────
+            "get_my_credentials",
         ],
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: True,
@@ -139,9 +255,21 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.ORDERS_ENABLED: True,
         FeatureFlag.SUPPORT_TICKETS_ENABLED: True,
         FeatureFlag.CREDENTIALS_ENABLED: False,
-        FeatureFlag.UI_ANALYTICS: True,
         FeatureFlag.UI_AGENT_RUNS: True,
         FeatureFlag.UI_WEBHOOK_EVENTS: True,
+        FeatureFlag.UI_DASHBOARD_CUSTOMIZE: True,
+        FeatureFlag.UI_DASHBOARD_WIDGETS: [
+            "stat.products",
+            "stat.customers",
+            "stat.open_tickets",
+            "stat.products_delivered",
+            "chart.revenue",
+            "stat.active_sessions",
+            "stat.agent_runs_today",
+            "stat.published_articles",
+            "chart.agent_runs_7d",
+            "chart.ticket_status",
+        ],
     },
     "enterprise": {
         FeatureFlag.AI_MODELS: None,
@@ -157,10 +285,16 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.ORDERS_ENABLED: True,
         FeatureFlag.SUPPORT_TICKETS_ENABLED: True,
         FeatureFlag.CREDENTIALS_ENABLED: True,
-        FeatureFlag.UI_ANALYTICS: True,
         FeatureFlag.UI_AGENT_RUNS: True,
         FeatureFlag.UI_WEBHOOK_EVENTS: True,
+        FeatureFlag.UI_DASHBOARD_CUSTOMIZE: True,
+        FeatureFlag.UI_DASHBOARD_WIDGETS: None,
     },
 }
 
 VALID_PLANS: frozenset[str] = frozenset(PLAN_DEFAULTS)
+
+# Used as a fallback when the business_entitlements table does not yet exist
+# (migrations pending). Grants the same access as enterprise so no functionality
+# is lost for businesses that existed before the entitlement system was added.
+MIGRATION_PENDING_FLAGS: dict[str, Any] = PLAN_DEFAULTS["enterprise"].copy()
