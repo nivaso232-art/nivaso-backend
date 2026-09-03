@@ -117,6 +117,34 @@ WIDGET_DEPENDENCIES: dict[str, str] = {
     "chart.ticket_priority":   FeatureFlag.SUPPORT_TICKETS_ENABLED,
 }
 
+# Tool name → feature flag that must be truthy for the tool to be injected.
+# Enforced at runner build-time in factory.py; cannot be bypassed via ai.tools
+# or per-business overrides. Absence means no dependency.
+#
+# This mirrors WIDGET_DEPENDENCIES: the ai.tools plan list sets the *maximum*
+# available tools; feature flags determine which of those are actually active.
+# Both must say yes for a tool to appear in the agent's tool list.
+TOOL_DEPENDENCIES: dict[str, str] = {
+    # ── Orders ───────────────────────────────────────────────────────────────
+    "create_order":               FeatureFlag.ORDERS_ENABLED,
+    "list_my_orders":             FeatureFlag.ORDERS_ENABLED,
+    "get_order_status":           FeatureFlag.ORDERS_ENABLED,
+    "cancel_order":               FeatureFlag.ORDERS_ENABLED,
+    "get_fulfillment_details":    FeatureFlag.ORDERS_ENABLED,
+    # ── Payments ─────────────────────────────────────────────────────────────
+    "create_payment_link":        FeatureFlag.CHANNEL_PAYMENTS,
+    "check_payment_status":       FeatureFlag.CHANNEL_PAYMENTS,
+    "get_order_payment_history":  FeatureFlag.CHANNEL_PAYMENTS,
+    "retry_payment":              FeatureFlag.CHANNEL_PAYMENTS,
+    # ── Credentials ──────────────────────────────────────────────────────────
+    "get_my_credentials":         FeatureFlag.CREDENTIALS_ENABLED,
+    "check_product_availability": FeatureFlag.CREDENTIALS_ENABLED,
+    # ── Support tickets ───────────────────────────────────────────────────────
+    "create_support_ticket":      FeatureFlag.SUPPORT_TICKETS_ENABLED,
+    "list_open_tickets":          FeatureFlag.SUPPORT_TICKETS_ENABLED,
+    "update_support_ticket":      FeatureFlag.SUPPORT_TICKETS_ENABLED,
+}
+
 
 # ── Plan defaults ────────────────────────────────────────────────────────────
 # Tool names match the ToolSpec.name values in app/agent/registry.py.

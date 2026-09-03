@@ -165,10 +165,30 @@ def build_agent_runner(
         if _allowed_models is not None and fb_model not in _allowed_models:
             fb_model = None  # fallback model not on plan — disable it
 
-        # Resolve tool and iteration limits from the plan.
+        # Resolve tool list from the plan.
         _allowed_tools = allowed_tools(entitlements)
         if _allowed_tools is not None:
             allowed_tool_names = frozenset(_allowed_tools)
+
+        # Strip tools whose feature-flag dependency is not satisfied.
+        # Works whether ai.tools is an explicit list or None (unrestricted):
+        # — explicit list → intersect with the candidate names
+        # — None (e.g. Enterprise) → start from the full registry, then filter
+        # This is the same one-directional rule as WIDGET_DEPENDENCIES:
+        # feature off → tool can never appear, regardless of what ai.tools says.
+        from app.entitlements.flags import TOOL_DEPENDENCIES
+        from app.agent.registry import TOOLS_BY_NAME
+
+        candidate_names = (
+            set(allowed_tool_names)
+            if allowed_tool_names is not None
+            else set(TOOLS_BY_NAME)
+        )
+        allowed_tool_names = frozenset(
+            name for name in candidate_names
+            if not TOOL_DEPENDENCIES.get(name)
+            or bool(entitlements.get(TOOL_DEPENDENCIES[name], False))
+        )
 
         max_iter_override = max_iterations(entitlements)
 
