@@ -9,10 +9,18 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AgentEffort = Literal["low", "medium", "high", "xhigh", "max"]
+
+_SECURITY_FIELDS = (
+    "internal_api_key",
+    "super_admin_api_key",
+    "jwt_secret",
+    "super_admin_username",
+    "super_admin_password",
+)
 
 
 class Settings(BaseSettings):
@@ -26,9 +34,18 @@ class Settings(BaseSettings):
     # -- Application ------------------------------------------------------
     app_env: Literal["local", "staging", "production"] = "local"
     log_level: str = "INFO"
-    internal_api_key: str = "change-me"
+    # No default outside local — see `_require_secrets_outside_local` below.
+    internal_api_key: str = ""
     # Separate key for super-admin routes — Nivaso operators only.
-    super_admin_api_key: str = "super-change-me"
+    super_admin_api_key: str = ""
+
+    # -- JWT (portal login) -----------------------------------------------
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expire_hours: int = 24
+    # Super-admin portal login credentials (separate from the API key).
+    super_admin_username: str = ""
+    super_admin_password: str = ""
 
     # -- Database ---------------------------------------------------------
     # Pooler (port 6543) for the app; direct (port 5432) for Alembic DDL.
@@ -89,13 +106,6 @@ class Settings(BaseSettings):
     # Base URL the mock link points at (must be reachable by whoever opens it).
     public_base_url: str = "http://localhost:8000"
 
-    # -- Multi-tenant routing --------------------------------------------
-    # Deprecated — multi-tenant routing now uses the business_channels table.
-    # Telegram: register bots at /webhooks/telegram/{slug}
-    # WhatsApp: match by phone_number_id from business_channels
-    # Leave this empty for multi-tenant deployments.
-    default_business_slug: str = ""
-
     @field_validator("database_url", "database_direct_url")
     @classmethod
     def _require_asyncpg_driver(cls, v: PostgresDsn) -> PostgresDsn:
@@ -118,6 +128,37 @@ class Settings(BaseSettings):
     @property
     def whatsapp_graph_base_url(self) -> str:
         return f"https://graph.facebook.com/{self.whatsapp_graph_api_version}"
+
+    @model_validator(mode="after")
+    def _require_secrets_outside_local(self) -> "Settings":
+        """Refuse to run staging/production on blank/placeholder secrets.
+
+        Local dev gets obviously-fake fallbacks so `uvicorn --reload` works
+        with no `.env` changes; everywhere else, a missing value is a
+        misconfiguration that must fail loudly at startup, not silently grant
+        super-admin/forge-a-JWT access to anyone who reads this repo.
+        """
+        if self.is_local:
+            local_fallbacks = {
+                "internal_api_key": "local-internal-key",
+                "super_admin_api_key": "local-super-admin-key",
+                "jwt_secret": "local-dev-jwt-secret-not-for-prod",
+                "super_admin_username": "superadmin",
+                "super_admin_password": "local-dev-super-admin-password",
+            }
+            for field, fallback in local_fallbacks.items():
+                if not getattr(self, field):
+                    setattr(self, field, fallback)
+            return self
+
+        missing = [f for f in _SECURITY_FIELDS if not getattr(self, f)]
+        if missing:
+            names = ", ".join(v.upper() for v in missing)
+            raise ValueError(
+                f"Missing required env var(s) outside local: {names}. "
+                "See .env.example for how to generate secure values."
+            )
+        return self
 
 
 @lru_cache(maxsize=1)
