@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.entitlements.flags import PLAN_DEFAULTS
 from app.entitlements.resolver import resolve
 from app.models.business_entitlement import BusinessEntitlement
+from app.repositories.plan_definitions import PlanDefinitionRepository
 
 
 class EntitlementRepository:
@@ -34,8 +35,26 @@ class EntitlementRepository:
         return row
 
     async def resolved(self, business_id: uuid.UUID) -> dict[str, Any]:
-        """Return the merged entitlements dict for a business."""
+        """Return the merged entitlements dict for a business.
+
+        Resolution order (lowest → highest priority):
+          1. Hardcoded code defaults  (PLAN_DEFAULTS in flags.py)
+          2. DB plan_definitions      (super-admin editable via Plan Defaults UI)
+          3. Per-business overrides   (granted by super-admin per-tenant)
+        """
         row = await self.get_or_create(business_id)
+
+        try:
+            plan_def = await PlanDefinitionRepository(self.session).get(row.plan)
+            if plan_def and plan_def.flags:
+                base = PLAN_DEFAULTS.get(row.plan, PLAN_DEFAULTS["free"]).copy()
+                base.update(plan_def.flags)   # DB plan overrides code defaults
+                base.update(row.overrides)    # per-business overrides win last
+                return base
+        except Exception:
+            pass
+
+        # No DB plan definition — fall back to code defaults + per-business overrides.
         return resolve(row.plan, row.overrides)
 
     async def set_plan(
