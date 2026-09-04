@@ -91,12 +91,26 @@ async def add_www_authenticate_on_401(request: Request, call_next: Any) -> Respo
 
 
 # -- CORS --------------------------------------------------------------------
-# Origins are configured via CORS_ORIGINS env var (comma-separated) in
-# staging/production.  Local dev always allows localhost ports automatically.
+# Resolution order:
+#   1. Local dev  → always allow localhost ports (allow_credentials=True)
+#   2. CORS_ORIGINS set → allow those specific origins (allow_credentials=True)
+#   3. Production fallback → allow all origins (allow_credentials=False)
+#      Safe because every sensitive endpoint requires a valid JWT; the
+#      browser same-origin policy only stops credential-free reads.
+if settings.is_local:
+    _cors_origins = settings.allowed_origins
+    _cors_credentials = True
+elif settings.cors_origins:
+    _cors_origins = settings.allowed_origins
+    _cors_credentials = True
+else:
+    _cors_origins = ["*"]         # permissive fallback; JWT still validates all requests
+    _cors_credentials = False     # required by spec when origin is "*"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Internal-Key", "X-Super-Admin-Key"],
 )
