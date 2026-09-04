@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     razorpay_key_secret: str = ""
     razorpay_webhook_secret: str = ""
 
+    # -- CORS -----------------------------------------------------------------
+    # Comma-separated list of allowed frontend origins for non-local envs.
+    # Example: CORS_ORIGINS=https://app.vercel.app,https://www.yourdomain.com
+    # In local dev this is ignored — localhost ports are always allowed.
+    cors_origins: str = ""
+
     # -- Mock payments ----------------------------------------------------
     # When true, the agent issues a mock payment link (no Razorpay call), and
     # opening that link completes the payment and triggers real delivery. Use
@@ -124,6 +130,18 @@ class Settings(BaseSettings):
     @property
     def is_local(self) -> bool:
         return self.app_env == "local"
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        """CORS origins the API will accept requests from."""
+        if self.is_local:
+            return [
+                "http://localhost:5173",
+                "http://localhost:5174",
+                "http://localhost:5175",
+                "http://localhost:3000",
+            ]
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def whatsapp_graph_base_url(self) -> str:

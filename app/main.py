@@ -90,18 +90,12 @@ async def add_www_authenticate_on_401(request: Request, call_next: Any) -> Respo
     return response
 
 
-# -- CORS (allow the admin frontend in local dev) ----------------------------
-_cors_origins = (
-    # Allow any localhost port in local dev so Vite's auto-port-increment
-    # (5173, 5174, 5175 …) never breaks CORS.
-    ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175",
-     "http://localhost:3000"]
-    if settings.is_local
-    else []  # in staging/prod, set origins via a reverse-proxy or extend here
-)
+# -- CORS --------------------------------------------------------------------
+# Origins are configured via CORS_ORIGINS env var (comma-separated) in
+# staging/production.  Local dev always allows localhost ports automatically.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Internal-Key", "X-Super-Admin-Key"],
