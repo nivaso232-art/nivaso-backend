@@ -74,13 +74,40 @@ def _normalize_schema(node: dict[str, Any]) -> dict[str, Any]:
 
 
 def _spec_to_openai_tool(spec: ToolSpec, *, strict: bool = True) -> dict[str, Any]:
-    """Convert a ToolSpec to the OpenAI function-calling format Groq expects."""
+    """Convert a ToolSpec to the OpenAI function-calling format Groq expects.
+
+    Groq's strict mode validates that the model provides every property listed
+    in ``required``. Our tool schemas mark nullable parameters as
+    ``type: ["X","null"]`` but still include them in ``required`` (Anthropic
+    treats them as optional in strict mode; Groq does not).
+
+    To avoid 400 validation errors, nullable properties are removed from
+    ``required`` before sending to Groq.  The model can still provide them —
+    they just won't be rejected when omitted.
+    """
+    raw = spec.input_schema
+    properties = raw.get("properties", {})
+
+    # Identify properties that are nullable (type is an array containing "null").
+    nullable_keys = {
+        k for k, v in properties.items()
+        if isinstance(v.get("type"), list) and "null" in v["type"]
+    }
+
+    # Build a normalised schema with nullable props removed from required.
+    normalised = _normalize_schema(raw)
+    if nullable_keys and "required" in normalised:
+        normalised = {
+            **normalised,
+            "required": [r for r in normalised["required"] if r not in nullable_keys],
+        }
+
     return {
         "type": "function",
         "function": {
             "name": spec.name,
             "description": spec.description,
-            "parameters": _normalize_schema(spec.input_schema),
+            "parameters": normalised,
             "strict": strict,
         },
     }
