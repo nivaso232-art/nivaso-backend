@@ -55,6 +55,49 @@ async def search_knowledge(
     }
 
 
+async def get_full_article(
+    ctx: ToolContext, article_id: str
+) -> dict[str, Any]:
+    """Fetch the complete, untruncated content of a knowledge article by its ID."""
+    import uuid as _uuid
+
+    try:
+        aid = _uuid.UUID(article_id)
+    except ValueError:
+        return {"error": f"'{article_id}' is not a valid article ID. Use the id returned by search_knowledge."}
+
+    try:
+        article = await ctx.knowledge.get_or_raise(aid)
+    except Exception:
+        return {"error": f"Article {article_id} not found."}
+
+    return {
+        "id": str(article.id),
+        "title": article.title,
+        "content": article.content,
+        "keywords": article.keywords,
+        "status": article.status.value,
+    }
+
+
+GET_FULL_ARTICLE = ToolSpec(
+    name="get_full_article",
+    description=(
+        "Fetch the complete, untruncated content of a knowledge base article by its ID. "
+        "Use this after search_knowledge returns truncated=true and the customer still "
+        "needs more detail. The article_id comes from a search_knowledge result."
+    ),
+    input_schema=schema(
+        properties={
+            "article_id": string_prop(
+                "The article UUID returned by search_knowledge."
+            ),
+        }
+    ),
+    handler=get_full_article,
+)
+
+
 SEARCH_KNOWLEDGE = ToolSpec(
     name="search_knowledge",
     description=(

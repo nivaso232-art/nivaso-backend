@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import select
@@ -14,6 +15,12 @@ from app.repositories.base import GlobalRepository
 
 class BusinessRepository(GlobalRepository[Business]):
     model = Business
+
+    async def get_by_id(self, business_id: uuid.UUID) -> Business | None:
+        result = await self.session.execute(
+            select(Business).where(Business.id == business_id)
+        )
+        return result.scalar_one_or_none()
 
     async def get_by_slug(self, slug: str) -> Business | None:
         stmt = select(Business).where(Business.slug == slug)

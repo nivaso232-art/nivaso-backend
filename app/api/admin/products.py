@@ -10,9 +10,13 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_business, get_session
+from app.core.errors import ForbiddenError
 from app.core.uow import UnitOfWork
+from app.entitlements.flags import FeatureFlag
+from app.entitlements.resolver import get_limit, resolve
 from app.models.business import Business
 from app.models.enums import ProductStatus
+from app.repositories.entitlements import EntitlementRepository
 from app.models.product import Product
 from app.repositories.products import ProductRepository
 
@@ -94,6 +98,17 @@ async def create_product(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> ProductOut:
+    ent_repo = EntitlementRepository(session)
+    ent = await ent_repo.get_or_create(business.id)
+    limit = get_limit(resolve(ent.plan, ent.overrides), FeatureFlag.PRODUCTS_LIMIT)
+    if limit is not None:
+        repo = ProductRepository(session, business.id)
+        count = await repo.count()
+        if count >= limit:
+            raise ForbiddenError(
+                f"Product limit reached ({limit}). Upgrade your plan to add more.",
+                details={"limit": limit, "current": count, "flag": FeatureFlag.PRODUCTS_LIMIT},
+            )
     product = Product(
         name=body.name,
         description=body.description,

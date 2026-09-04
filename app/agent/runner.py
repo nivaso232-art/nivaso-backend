@@ -194,16 +194,21 @@ class AgentRunner:
         *,
         model: str | None = None,
         extra_tools: Sequence[ToolSpec] = (),
+        allowed_tool_names: frozenset[str] | None = None,
+        max_iterations_override: int | None = None,
     ) -> None:
         self.ctx = ctx
         self.model = model or settings.agent_model
         self.extra_tools = extra_tools
         self.admin_mode = bool(extra_tools)
-        # Merge base tools with any caller-supplied extras (e.g. admin tools).
-        self._tools_by_name = {
-            **TOOLS_BY_NAME,
-            **{t.name: t for t in extra_tools},
-        }
+        self.allowed_tool_names = allowed_tool_names
+        self.max_iterations_override = max_iterations_override
+        # Merge base tools with any caller-supplied extras (e.g. admin tools),
+        # restricting to the allowed set when entitlements are enforced.
+        base_registry = TOOLS_BY_NAME
+        if allowed_tool_names is not None:
+            base_registry = {k: v for k, v in TOOLS_BY_NAME.items() if k in allowed_tool_names}
+        self._tools_by_name = {**base_registry, **{t.name: t for t in extra_tools}}
 
     async def run(
         self,
@@ -273,12 +278,13 @@ class AgentRunner:
 
         try:
             async with UnitOfWork(self.ctx.session):
-                while iterations < settings.agent_max_iterations:
+                while iterations < (self.max_iterations_override or settings.agent_max_iterations):
                     iterations += 1
 
-                    all_tools = api_tools() + [
-                        t.to_api_tool() for t in self.extra_tools
-                    ]
+                    base_tools = api_tools()
+                    if self.allowed_tool_names is not None:
+                        base_tools = [t for t in base_tools if t["name"] in self.allowed_tool_names]
+                    all_tools = base_tools + [t.to_api_tool() for t in self.extra_tools]
                     response = await _client.messages.create(
                         model=self.model,
                         max_tokens=settings.agent_max_tokens,

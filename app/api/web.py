@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,42 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/web", tags=["web"])
 
 
+def _caller_is_admin(
+    authorization: str | None,
+    x_internal_key: str | None,
+) -> bool:
+    """Return True if the request is authenticated as a business admin.
+
+    Two accepted proofs:
+    - A valid JWT with role "admin" or "super_admin"  (admin portal login)
+    - The X-Internal-Key header matching settings.internal_api_key
+
+    Real customers coming from the web-embed widget or channels carry neither,
+    so they are always treated as non-admin regardless of the request body.
+    This check is intentionally server-side: no body flag that a caller can
+    forge substitutes for a cryptographically verified identity.
+    """
+    if x_internal_key:
+        try:
+            from app.core.security import verify_internal_api_key
+            verify_internal_api_key(
+                expected=settings.internal_api_key, provided=x_internal_key
+            )
+            return True
+        except Exception:
+            pass
+
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            from app.core.jwt import decode_token
+            claims = decode_token(authorization.split(" ", 1)[1])
+            return claims.get("role") in ("admin", "super_admin")
+        except Exception:
+            pass
+
+    return False
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, description="The customer's message.")
     user_id: str = Field(
@@ -59,7 +95,7 @@ class ChatRequest(BaseModel):
     )
     business_slug: str | None = Field(
         default=None,
-        description="Which tenant to talk to. Falls back to DEFAULT_BUSINESS_SLUG.",
+        description="Which tenant to talk to. Required — there is no default.",
     )
     display_name: str | None = Field(default=None)
     provider: str | None = Field(
@@ -133,6 +169,8 @@ def _trailing_tool_calls(history: Any, after_message_id: Any) -> list[ToolCall]:
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
+    authorization: str | None = Header(default=None),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Key"),
     session: AsyncSession = Depends(get_session),
 ) -> ChatResponse:
     """Send one message to the agent and get its reply synchronously."""
@@ -148,9 +186,17 @@ async def chat(
         business = await businesses.get_active_or_raise(slug)
 
         customer_svc = CustomerService(session, business.id)
+        # Gate on verified identity, not on a body flag the caller controls.
+        # Authenticated admins (valid JWT or X-Internal-Key) get the __admin__
+        # prefix so their test conversations are excluded from the customer list.
+        # Real customers from channels never carry admin credentials.
+        is_admin = _caller_is_admin(authorization, x_internal_key)
+        effective_user_id = (
+            f"__admin__{body.user_id}" if is_admin else body.user_id
+        )
         customer, channel_row = await customer_svc.resolve_or_create(
             channel=Channel.WEB,
-            external_user_id=body.user_id,
+            external_user_id=effective_user_id,
             display_name=body.display_name,
         )
 
@@ -186,11 +232,23 @@ async def chat(
         customer=customer,
         conversation=conversation,
     )
+
+    # Load entitlements to enforce plan restrictions on AI tools/models.
+    # Use an isolated session so this read doesn't join the outer transaction.
+    from app.repositories.entitlements import EntitlementRepository
+    try:
+        from app.core.db import SessionFactory
+        async with SessionFactory() as ent_session:
+            ents = await EntitlementRepository(ent_session).resolved(business.id)
+    except Exception:
+        ents = None
+
     runner = build_agent_runner(
         ctx,
         provider=body.provider,
         model=body.model,
         admin_mode=body.admin_mode,
+        entitlements=ents,
     )
     reply = await runner.run(
         history=history,

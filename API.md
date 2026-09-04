@@ -139,7 +139,7 @@ where it is disabled for convenience.
 |-------|------|----------|-------------|
 | `message` | string | yes | The customer's message |
 | `user_id` | string | no | Stable id for this tester. Same id = same conversation. Defaults to `web-tester`. |
-| `business_slug` | string | no | Which tenant to talk to. Falls back to `DEFAULT_BUSINESS_SLUG`. |
+| `business_slug` | string | yes | Which tenant to talk to. Required — there is no default. |
 | `display_name` | string | no | Optional display name for the customer |
 
 **Success response — `200 OK`**

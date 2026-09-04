@@ -94,3 +94,17 @@ class ToolContext:
     def note(self, message: str) -> None:
         """Record something the caller may want to act on after the turn."""
         self.side_effects.append(message)
+
+
+@dataclass
+class SuperAdminContext:
+    """Minimal context for super-admin AI tools.
+
+    Super-admin tools operate at the platform level — they query and mutate
+    businesses, plans, and entitlements without being scoped to any single
+    tenant.  They receive this context instead of ``ToolContext`` so they
+    have no accidentally-exposed tenant steering wheel.
+    """
+
+    session: AsyncSession
+    performed_by: str = "super-admin-ai"
