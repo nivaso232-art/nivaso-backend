@@ -53,8 +53,8 @@ AVAILABLE_MODELS: list[ModelInfo] = [
     },
     {
         "provider": "gemini",
-        "model": "gemini-2.0-flash-lite",
-        "label": "Gemini 2.0 Flash Lite",
+        "model": "gemini-3.5-flash-lite",
+        "label": "Gemini 3.5 Flash Lite",
         "tier": "fast",
     },
 ]

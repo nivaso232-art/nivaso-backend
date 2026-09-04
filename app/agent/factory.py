@@ -162,6 +162,16 @@ def build_agent_runner(
         _allowed_models = allowed_models(entitlements)
         if _allowed_models is not None and eff_model not in _allowed_models:
             eff_model = _allowed_models[0] if _allowed_models else None
+            # Sync provider with the clamped model so the correct runner is
+            # selected.  Without this, a plan that allows only Gemini models
+            # would clamp eff_model to "gemini-2.5-flash" but leave
+            # eff_provider as "anthropic", sending a Gemini model ID to the
+            # Anthropic API — causing a 404/invalid-model error.
+            if eff_model:
+                from app.agent.models_registry import AVAILABLE_MODELS
+                _m = next((m for m in AVAILABLE_MODELS if m["model"] == eff_model), None)
+                if _m:
+                    eff_provider = _m["provider"]
         if _allowed_models is not None and fb_model not in _allowed_models:
             fb_model = None  # fallback model not on plan — disable it
 
