@@ -284,7 +284,11 @@ class AgentRunner:
                     base_tools = api_tools()
                     if self.allowed_tool_names is not None:
                         base_tools = [t for t in base_tools if t["name"] in self.allowed_tool_names]
-                    all_tools = base_tools + [t.to_api_tool() for t in self.extra_tools]
+                    # Admin tools (extra_tools) are rendered as strict=False so they
+                    # don't count toward Anthropic's 20-strict-tool limit. Customer-
+                    # facing base tools stay strict for schema safety.
+                    extra_api = [{**t.to_api_tool(), "strict": False} for t in self.extra_tools]
+                    all_tools = base_tools + extra_api
                     response = await _client.messages.create(
                         model=self.model,
                         max_tokens=settings.agent_max_tokens,
