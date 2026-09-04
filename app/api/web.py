@@ -104,7 +104,7 @@ class ChatRequest(BaseModel):
     )
     model: str | None = Field(
         default=None,
-        description="Override the model ID (e.g. 'claude-sonnet-4-6', 'gemini-2.5-flash').",
+        description="Override the model ID (e.g. 'claude-sonnet-4-6', 'gemini-3.6-flash').",
     )
     admin_mode: bool = Field(
         default=False,
