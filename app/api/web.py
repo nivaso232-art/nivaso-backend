@@ -148,9 +148,16 @@ async def chat(
         business = await businesses.get_active_or_raise(slug)
 
         customer_svc = CustomerService(session, business.id)
+        # Admin test sessions are prefixed so the customer list can exclude them
+        # regardless of what user_id the frontend sends.  The prefix is applied
+        # here — the only place that knows admin_mode — not in the frontend,
+        # so renaming the session ID in the UI never bypasses the filter.
+        effective_user_id = (
+            f"__admin__{body.user_id}" if body.admin_mode else body.user_id
+        )
         customer, channel_row = await customer_svc.resolve_or_create(
             channel=Channel.WEB,
-            external_user_id=body.user_id,
+            external_user_id=effective_user_id,
             display_name=body.display_name,
         )
 
