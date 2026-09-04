@@ -1,10 +1,12 @@
-"""Telegram Bot API — sending messages.
+"""Telegram Bot API — sending messages and webhook registration.
 
 Per-business bot tokens are passed at construction time so each business
 can use its own Telegram bot. Falls back to global settings when not provided.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import structlog
 import httpx
@@ -19,7 +21,7 @@ _BASE = "https://api.telegram.org"
 
 
 class TelegramClient:
-    """Send messages via the Telegram Bot API."""
+    """Send messages and manage webhooks via the Telegram Bot API."""
 
     def __init__(self, *, bot_token: str | None = None) -> None:
         token = bot_token or settings.telegram_bot_token
@@ -28,6 +30,30 @@ class TelegramClient:
                 "Telegram is not configured (TELEGRAM_BOT_TOKEN missing)"
             )
         self._base = f"{_BASE}/bot{token}"
+
+    async def set_webhook(self, *, url: str, secret_token: str | None = None) -> None:
+        """Register this bot's webhook URL with Telegram."""
+        payload: dict[str, Any] = {"url": url}
+        if secret_token:
+            payload["secret_token"] = secret_token
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                resp = await client.post(f"{self._base}/setWebhook", json=payload)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise ProviderError(
+                    f"Telegram setWebhook failed: {exc.response.text}",
+                    details={"status": exc.response.status_code},
+                ) from exc
+            except httpx.RequestError as exc:
+                raise ProviderError(f"Telegram request error: {exc}") from exc
+        data = resp.json()
+        if not data.get("ok"):
+            raise ProviderError(
+                f"Telegram setWebhook rejected: {data.get('description', 'unknown')}",
+                details=data,
+            )
+        log.info("telegram_webhook_registered", url=url)
 
     @retry(
         stop=stop_after_attempt(3),

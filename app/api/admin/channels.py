@@ -12,12 +12,14 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_business, get_session
+from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.uow import UnitOfWork
 from app.entitlements.flags import FeatureFlag
 from app.entitlements.resolver import check, resolve
 from app.models.business import Business
 from app.models.business_channel import BusinessChannel
+from app.providers.telegram.client import TelegramClient
 from app.repositories.business_channels import BusinessChannelRepository
 from app.repositories.entitlements import EntitlementRepository
 
@@ -115,6 +117,16 @@ async def configure_telegram(
             external_channel_id=bot_id,
             credentials=credentials,
         )
+
+    # Auto-register the webhook with Telegram so messages are delivered immediately.
+    # Raises ProviderError (→ 502) if the bot token is invalid or Telegram rejects it.
+    webhook_url = f"{settings.public_base_url}/webhooks/telegram/{slug}"
+    tg = TelegramClient(bot_token=body.bot_token)
+    await tg.set_webhook(
+        url=webhook_url,
+        secret_token=body.webhook_secret or None,
+    )
+
     return ChannelOut.from_orm(channel, slug)
 
 
