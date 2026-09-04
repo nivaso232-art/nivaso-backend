@@ -105,6 +105,14 @@ def _build_single_runner(
             max_iterations_override=max_iterations_override,
         )
 
+    if provider == "groq":
+        from app.agent.groq_runner import GroqAgentRunner
+        return GroqAgentRunner(
+            ctx, model=model, extra_tools=extra_tools,
+            allowed_tool_names=allowed_tool_names,
+            max_iterations_override=max_iterations_override,
+        )
+
     from app.agent.runner import AgentRunner
     return AgentRunner(
         ctx, model=model, extra_tools=extra_tools,

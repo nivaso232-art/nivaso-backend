@@ -57,6 +57,31 @@ AVAILABLE_MODELS: list[ModelInfo] = [
         "label": "Gemini 3.5 Flash Lite",
         "tier": "fast",
     },
+    # ── Groq — fast inference, OpenAI-compatible API ─────────────────────────
+    {
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b",
+        "label": "GPT-OSS 120B (Groq)",
+        "tier": "powerful",
+    },
+    {
+        "provider": "groq",
+        "model": "llama-3.3-70b-versatile",
+        "label": "Llama 3.3 70B (Groq)",
+        "tier": "balanced",
+    },
+    {
+        "provider": "groq",
+        "model": "llama3-groq-70b-8192-tool-use-preview",
+        "label": "Llama 3 70B Tool Use (Groq)",
+        "tier": "fast",
+    },
+    {
+        "provider": "groq",
+        "model": "deepseek-r1-distill-llama-70b",
+        "label": "DeepSeek R1 70B (Groq)",
+        "tier": "balanced",
+    },
 ]
 
 _VALID: frozenset[tuple[str, str]] = frozenset(

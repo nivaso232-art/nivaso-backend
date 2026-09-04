@@ -252,6 +252,11 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "claude-opus-4-7",
             "gemini-3.6-flash",
             "gemini-3.1-pro-preview",
+            # Groq — fast inference
+            "llama-3.3-70b-versatile",
+            "llama3-groq-70b-8192-tool-use-preview",
+            "openai/gpt-oss-120b",
+            "deepseek-r1-distill-llama-70b",
         ],
         FeatureFlag.AI_CUSTOM_MODEL_PICKER: True,
         FeatureFlag.AI_MAX_ITERATIONS: 8,

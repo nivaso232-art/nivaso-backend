@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
 
+    # -- Groq (fast inference, OpenAI-compatible) -------------------------
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+
     # -- Credential vault -------------------------------------------------
     # Fernet key used to encrypt game-account secrets at rest. Generate with
     # Fernet.generate_key(). Without it, credential delivery cannot run.
