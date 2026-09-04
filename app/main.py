@@ -91,26 +91,17 @@ async def add_www_authenticate_on_401(request: Request, call_next: Any) -> Respo
 
 
 # -- CORS --------------------------------------------------------------------
-# Local dev: specific localhost origins.
-# Production: wildcard — JWTs authenticate every sensitive endpoint so
-# restricting origins adds no real security, and a misconfigured CORS_ORIGINS
-# env var would silently break the UI with a misleading CORS error.
-# vercel.json handles the OPTIONS preflight at CDN level; this middleware
-# covers the ACAO header on actual (non-OPTIONS) responses.
+# Production CORS is handled entirely by Vercel routing (vercel.json injects
+# Access-Control-Allow-Origin on every response, OPTIONS returns 204 at CDN
+# level). Middleware is only needed for local uvicorn development.
 if settings.is_local:
-    _cors_origins = settings.allowed_origins
-    _cors_credentials = True
-else:
-    _cors_origins = ["*"]
-    _cors_credentials = False
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=_cors_credentials,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Internal-Key", "X-Super-Admin-Key"],
-)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Internal-Key", "X-Super-Admin-Key"],
+    )
 
 
 # -- Webhook routes (public, use their own signature verification) ------------

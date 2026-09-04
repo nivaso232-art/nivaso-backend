@@ -20,6 +20,10 @@
     },
     {
       "src": "/(.*)",
+      "headers": {
+        "Access-Control-Allow-Origin": "https://nivaso-frontend.vercel.app",
+        "Access-Control-Allow-Credentials": "true"
+      },
       "dest": "api/index.py"
     }
   ]
