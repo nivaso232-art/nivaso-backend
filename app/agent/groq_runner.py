@@ -73,42 +73,25 @@ def _normalize_schema(node: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _spec_to_openai_tool(spec: ToolSpec, *, strict: bool = True) -> dict[str, Any]:
+def _spec_to_openai_tool(spec: ToolSpec) -> dict[str, Any]:
     """Convert a ToolSpec to the OpenAI function-calling format Groq expects.
 
-    Groq's strict mode validates that the model provides every property listed
-    in ``required``. Our tool schemas mark nullable parameters as
-    ``type: ["X","null"]`` but still include them in ``required`` (Anthropic
-    treats them as optional in strict mode; Groq does not).
+    Groq's strict=true has an all-or-nothing constraint: every property must
+    be in required AND the model must always supply it. This conflicts with our
+    nullable-optional pattern (e.g. category/limit on search_products) where
+    Anthropic strict mode allows omission via null types.
 
-    To avoid 400 validation errors, nullable properties are removed from
-    ``required`` before sending to Groq.  The model can still provide them —
-    they just won't be rejected when omitted.
+    Solution: always use strict=false for Groq. The model still follows the
+    schema description; Groq just won't reject calls that omit nullable fields.
+    The handler validates inputs itself so safety is preserved.
     """
-    raw = spec.input_schema
-    properties = raw.get("properties", {})
-
-    # Identify properties that are nullable (type is an array containing "null").
-    nullable_keys = {
-        k for k, v in properties.items()
-        if isinstance(v.get("type"), list) and "null" in v["type"]
-    }
-
-    # Build a normalised schema with nullable props removed from required.
-    normalised = _normalize_schema(raw)
-    if nullable_keys and "required" in normalised:
-        normalised = {
-            **normalised,
-            "required": [r for r in normalised["required"] if r not in nullable_keys],
-        }
-
     return {
         "type": "function",
         "function": {
             "name": spec.name,
             "description": spec.description,
-            "parameters": normalised,
-            "strict": strict,
+            "parameters": _normalize_schema(spec.input_schema),
+            "strict": False,
         },
     }
 
@@ -230,12 +213,8 @@ class GroqAgentRunner:
 
         # Build tools: base tools strict, admin extra_tools non-strict.
         all_tools: list[dict[str, Any]] = [
-            _spec_to_openai_tool(spec, strict=True)
+            _spec_to_openai_tool(spec)
             for spec in self._tools_by_name.values()
-            if spec not in list(self.extra_tools)
-        ] + [
-            _spec_to_openai_tool(spec, strict=False)
-            for spec in self.extra_tools
         ]
 
         total_input = total_output = 0
