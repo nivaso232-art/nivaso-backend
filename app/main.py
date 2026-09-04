@@ -91,21 +91,18 @@ async def add_www_authenticate_on_401(request: Request, call_next: Any) -> Respo
 
 
 # -- CORS --------------------------------------------------------------------
-# Resolution order:
-#   1. Local dev  → always allow localhost ports (allow_credentials=True)
-#   2. CORS_ORIGINS set → allow those specific origins (allow_credentials=True)
-#   3. Production fallback → allow all origins (allow_credentials=False)
-#      Safe because every sensitive endpoint requires a valid JWT; the
-#      browser same-origin policy only stops credential-free reads.
+# Local dev: specific localhost origins.
+# Production: wildcard — JWTs authenticate every sensitive endpoint so
+# restricting origins adds no real security, and a misconfigured CORS_ORIGINS
+# env var would silently break the UI with a misleading CORS error.
+# vercel.json handles the OPTIONS preflight at CDN level; this middleware
+# covers the ACAO header on actual (non-OPTIONS) responses.
 if settings.is_local:
     _cors_origins = settings.allowed_origins
     _cors_credentials = True
-elif settings.cors_origins:
-    _cors_origins = settings.allowed_origins
-    _cors_credentials = True
 else:
-    _cors_origins = ["*"]         # permissive fallback; JWT still validates all requests
-    _cors_credentials = False     # required by spec when origin is "*"
+    _cors_origins = ["*"]
+    _cors_credentials = False
 
 app.add_middleware(
     CORSMiddleware,
