@@ -74,7 +74,6 @@ LIST_BUSINESS_TICKETS = ToolSpec(
         }
     ),
     handler=list_business_tickets,
-    strict=False,
 )
 
 
@@ -116,7 +115,6 @@ ASSIGN_TICKET = ToolSpec(
         }
     ),
     handler=assign_ticket,
-    strict=False,
 )
 
 
@@ -162,7 +160,6 @@ RESOLVE_TICKET = ToolSpec(
         "additionalProperties": False,
     },
     handler=resolve_ticket,
-    strict=False,
 )
 
 
@@ -209,7 +206,6 @@ LOOKUP_CUSTOMER = ToolSpec(
         }
     ),
     handler=lookup_customer,
-    strict=False,
 )
 
 
@@ -250,7 +246,6 @@ SEND_PROACTIVE_MESSAGE = ToolSpec(
         }
     ),
     handler=send_proactive_message,
-    strict=False,
 )
 
 

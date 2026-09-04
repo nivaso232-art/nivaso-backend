@@ -153,7 +153,6 @@ LIST_KNOWLEDGE_ARTICLES = ToolSpec(
         }
     ),
     handler=list_knowledge_articles,
-    strict=False,
 )
 
 CREATE_KNOWLEDGE_ARTICLE = ToolSpec(
@@ -193,7 +192,6 @@ CREATE_KNOWLEDGE_ARTICLE = ToolSpec(
         "additionalProperties": False,
     },
     handler=create_knowledge_article,
-    strict=False,
 )
 
 UPDATE_KNOWLEDGE_ARTICLE = ToolSpec(
@@ -233,7 +231,6 @@ UPDATE_KNOWLEDGE_ARTICLE = ToolSpec(
         "additionalProperties": False,
     },
     handler=update_knowledge_article,
-    strict=False,
 )
 
 ADMIN_TOOLS: tuple[ToolSpec, ...] = (
