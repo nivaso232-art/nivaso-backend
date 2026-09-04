@@ -115,6 +115,25 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Internal-Key", "X-Super-Admin-Key"],
 )
 
+
+# Explicit OPTIONS handler — guarantees preflight always returns 200 with
+# CORS headers even if the middleware would otherwise reject the origin.
+# This is the outermost safety net for production deployments where the
+# CORS_ORIGINS env var may not yet be configured.
+@app.options("/{path:path}")
+async def _cors_preflight(request: Request) -> Response:
+    origin = request.headers.get("origin", "*")
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Internal-Key, X-Super-Admin-Key",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Max-Age": "86400",
+        },
+    )
+
 # -- Webhook routes (public, use their own signature verification) ------------
 app.include_router(whatsapp.router)
 app.include_router(telegram.router)
