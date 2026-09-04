@@ -165,6 +165,15 @@ def build_agent_runner(
     fb_provider: str | None = biz_cfg.get("fallback_provider")
     fb_model: str | None = biz_cfg.get("fallback_model")
 
+    # Auto-detect provider from the model registry when a model is given but
+    # no provider was specified.  This lets callers pass only a model ID and get
+    # the right runner automatically (e.g. a Groq model without provider="groq").
+    if eff_model and not provider and not biz_cfg.get("provider"):
+        from app.agent.models_registry import AVAILABLE_MODELS
+        _reg = next((m for m in AVAILABLE_MODELS if m["model"] == eff_model), None)
+        if _reg:
+            eff_provider = _reg["provider"]
+
     # -- Entitlement enforcement --------------------------------------------
     allowed_tool_names: frozenset[str] | None = None
     max_iter_override: int | None = None
