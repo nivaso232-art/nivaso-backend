@@ -173,6 +173,9 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "create_support_ticket",
             # ── delivery ───────────────────────────────────────────────────
             "get_my_credentials",
+            # ── platform (mandatory baseline, no dependency gate) ──────────
+            "request_feature_access",
+            "check_feature_request_status",
         ],
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: False,
@@ -218,6 +221,9 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "create_support_ticket",
             # ── delivery ───────────────────────────────────────────────────
             "get_my_credentials",
+            # ── platform (mandatory baseline) ──────────────────────────────
+            "request_feature_access",
+            "check_feature_request_status",
         ],
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: False,
@@ -273,6 +279,9 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "create_support_ticket",
             # ── delivery ───────────────────────────────────────────────────
             "get_my_credentials",
+            # ── platform (mandatory baseline) ──────────────────────────────
+            "request_feature_access",
+            "check_feature_request_status",
         ],
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: True,

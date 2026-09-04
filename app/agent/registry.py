@@ -22,6 +22,7 @@ from app.agent.tools.catalog import (
 )
 from app.agent.tools.context_tools import GET_CONVERSATION_SUMMARY
 from app.agent.tools.delivery import GET_FULFILLMENT_DETAILS, GET_MY_CREDENTIALS
+from app.agent.tools.platform import CHECK_FEATURE_REQUEST_STATUS, REQUEST_FEATURE_ACCESS
 from app.agent.tools.knowledge import GET_FULL_ARTICLE, SEARCH_KNOWLEDGE
 from app.agent.tools.orders import (
     CANCEL_ORDER,
@@ -69,6 +70,9 @@ TOOLS: tuple[ToolSpec, ...] = (
     GET_CONVERSATION_SUMMARY,
     # ── delivery ─────────────────────────────────────────────────────────────
     GET_MY_CREDENTIALS,
+    # ── platform (no dependency gate — available even when features are off) ─
+    REQUEST_FEATURE_ACCESS,
+    CHECK_FEATURE_REQUEST_STATUS,
 )
 
 TOOLS_BY_NAME: dict[str, ToolSpec] = {tool.name: tool for tool in TOOLS}
