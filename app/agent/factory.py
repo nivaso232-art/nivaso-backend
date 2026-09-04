@@ -144,14 +144,14 @@ def build_agent_runner(
         from app.agent.tools.admin_support import ADMIN_SUPPORT_TOOLS
         extra_tools = ADMIN_TOOLS + ADMIN_SUPPORT_TOOLS
 
-    # Per-business model config stored in business.settings["agent"].
-    biz_cfg: dict = (ctx.business.settings or {}).get("agent") or {}
+    # Model selection: explicit request value → platform .env default.
+    # Per-business model overrides (business.settings["agent"]) are intentionally
+    # skipped — model credentials are managed at the platform level only.
+    eff_provider = provider or settings.llm_provider
+    eff_model: str | None = model or None
 
-    eff_provider = provider or biz_cfg.get("provider") or settings.llm_provider
-    eff_model: str | None = model or biz_cfg.get("model") or None
-
-    fb_provider: str | None = biz_cfg.get("fallback_provider")
-    fb_model: str | None = biz_cfg.get("fallback_model")
+    fb_provider: str | None = None
+    fb_model: str | None = None
 
     # -- Entitlement enforcement --------------------------------------------
     allowed_tool_names: frozenset[str] | None = None

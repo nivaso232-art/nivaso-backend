@@ -73,6 +73,11 @@ class ToolSpec:
     description: str
     input_schema: dict[str, Any]
     handler: ToolHandler
+    # Anthropic limits strict tools to 20 per request. Admin-only tools are
+    # injected on top of the customer-facing set, so mark them strict=False to
+    # keep the total strict count within the limit. Non-strict tools still
+    # validate the schema; Anthropic just does not enforce it server-side.
+    strict: bool = True
 
     def to_api_tool(self) -> dict[str, Any]:
         """Render for the Anthropic ``tools`` parameter.
@@ -88,7 +93,7 @@ class ToolSpec:
         return {
             "name": self.name,
             "description": self.description,
-            "strict": True,
+            "strict": self.strict,
             "input_schema": _strip_for_anthropic(self.input_schema),
         }
 
