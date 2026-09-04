@@ -65,6 +65,10 @@ class FallbackAgentRunner:
         self.primary = primary
         self.fallback = fallback
 
+    @property
+    def model(self) -> str:
+        return getattr(self.primary, "model", "unknown")
+
     async def run(self, **kwargs: Any) -> str:
         try:
             return await self.primary.run(**kwargs)
