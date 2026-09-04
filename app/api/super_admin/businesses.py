@@ -56,13 +56,19 @@ class SuperAdminBusinessCreatedOut(SuperAdminBusinessOut):
     admin_password: str  # shown once — not stored in plaintext
 
 
-def _build_out(biz: Business, plan: str, overrides: dict, granted_by: str | None) -> SuperAdminBusinessOut:
-    # When migrations are pending the resolved flags fall back to enterprise
-    # so the UI remains fully functional while displaying a "migration_pending" badge.
-    resolved = (
-        MIGRATION_PENDING_FLAGS if plan == "migration_pending"
-        else resolve(plan, overrides)
-    )
+def _build_out(
+    biz: Business,
+    plan: str,
+    overrides: dict,
+    granted_by: str | None,
+    resolved_flags: dict | None = None,
+) -> SuperAdminBusinessOut:
+    if resolved_flags is not None:
+        resolved = resolved_flags
+    elif plan == "migration_pending":
+        resolved = MIGRATION_PENDING_FLAGS
+    else:
+        resolved = resolve(plan, overrides)  # fallback when resolved_flags not provided
     return SuperAdminBusinessOut(
         business_id=str(biz.id),
         business_name=biz.name,
@@ -77,20 +83,22 @@ def _build_out(biz: Business, plan: str, overrides: dict, granted_by: str | None
     )
 
 
-async def _safe_get_ent(business_id: object) -> tuple[str, dict, str | None]:
-    """Return (plan, overrides, granted_by) using an isolated session.
+async def _safe_get_ent(business_id: object) -> tuple[str, dict, str | None, dict | None]:
+    """Return (plan, overrides, granted_by, resolved_flags) using an isolated session.
 
-    Using a separate session prevents the main request session from being left
-    in a broken state when business_entitlements does not exist yet.
+    resolved_flags is computed via EntitlementRepository.resolved() which respects
+    DB plan_definitions on top of code defaults and per-business overrides.
     """
     from app.core.db import SessionFactory
     try:
         async with SessionFactory() as iso:
-            ent = await EntitlementRepository(iso).get_or_create(business_id)  # type: ignore[arg-type]
+            ent_repo = EntitlementRepository(iso)
+            ent = await ent_repo.get_or_create(business_id)  # type: ignore[arg-type]
+            resolved_flags = await ent_repo.resolved(business_id)  # type: ignore[arg-type]
             await iso.commit()
-            return ent.plan, ent.overrides, ent.granted_by
+            return ent.plan, ent.overrides, ent.granted_by, resolved_flags
     except Exception:
-        return "migration_pending", {}, None
+        return "migration_pending", {}, None, None
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
@@ -251,10 +259,9 @@ async def get_business(
     biz_repo = BusinessRepository(session)
     biz = await biz_repo.get_by_slug_or_raise(slug)
 
-    ent_repo = EntitlementRepository(session)
-    plan, overrides, granted_by = await _safe_get_ent(biz.id)
+    plan, overrides, granted_by, resolved_flags = await _safe_get_ent(biz.id)
 
-    return _build_out(biz, plan, overrides, granted_by)
+    return _build_out(biz, plan, overrides, granted_by, resolved_flags)
 
 
 @router.patch("/{slug}/plan", response_model=SuperAdminBusinessOut)
@@ -311,14 +318,13 @@ async def set_status(
     biz_repo = BusinessRepository(session)
     biz = await biz_repo.get_by_slug_or_raise(slug)
 
-    ent_repo = EntitlementRepository(session)
-    plan, overrides, granted_by = await _safe_get_ent(biz.id)
+    plan, overrides, granted_by, resolved_flags = await _safe_get_ent(biz.id)
 
     async with UnitOfWork(session):
         biz.status = BusinessStatus(body.status)
         await _write_audit(session, biz.id, "status_changed", {"status": body.status})
 
-    return _build_out(biz, plan, overrides, granted_by)
+    return _build_out(biz, plan, overrides, granted_by, resolved_flags)
 
 
 # ── Audit helper (used by plan/override/status routes) ───────────────────────

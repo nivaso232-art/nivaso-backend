@@ -120,9 +120,12 @@ async def get_entitlements(
     from app.core.db import SessionFactory
     try:
         async with SessionFactory() as iso:
-            ent = await EntitlementRepository(iso).get_or_create(biz.id)
+            ent_repo = EntitlementRepository(iso)
+            ent = await ent_repo.get_or_create(biz.id)
+            # resolved() merges: code defaults → DB plan_definitions → per-business overrides
+            flags = await ent_repo.resolved(biz.id)
             await iso.commit()
-            return {"plan": ent.plan, "flags": resolve(ent.plan, ent.overrides)}
+            return {"plan": ent.plan, "flags": flags}
     except Exception:
         # Migrations not yet applied — return enterprise-level flags so no
         # existing functionality is lost while migrations are pending.

@@ -45,7 +45,12 @@ class EntitlementRepository:
         row = await self.get_or_create(business_id)
 
         try:
-            plan_def = await PlanDefinitionRepository(self.session).get(row.plan)
+            # Use a separate session for plan_definitions so its own committed
+            # state is always visible — the current session may be mid-transaction
+            # from get_or_create's flush, which would hide already-committed rows.
+            from app.core.db import SessionFactory
+            async with SessionFactory() as pd_session:
+                plan_def = await PlanDefinitionRepository(pd_session).get(row.plan)
             if plan_def and plan_def.flags:
                 base = PLAN_DEFAULTS.get(row.plan, PLAN_DEFAULTS["free"]).copy()
                 base.update(plan_def.flags)   # DB plan overrides code defaults
