@@ -220,6 +220,14 @@ async def _handle_message(
         log.error("telegram_business_not_found", slug=slug, error=str(exc))
         return
 
+    # Load entitlements so plan restrictions (tools, model) are enforced.
+    try:
+        from app.repositories.entitlements import EntitlementRepository
+        async with SessionFactory() as ent_session:
+            ents = await EntitlementRepository(ent_session).resolved(business.id)
+    except Exception:
+        ents = None
+
     try:
         ctx = ToolContext(
             session=session,
@@ -227,7 +235,7 @@ async def _handle_message(
             customer=customer,
             conversation=conversation,
         )
-        runner = build_agent_runner(ctx)
+        runner = build_agent_runner(ctx, entitlements=ents)
         reply = await runner.run(
             history=history,
             user_text=msg.text or "[non-text message]",
@@ -237,6 +245,16 @@ async def _handle_message(
     except Exception as exc:
         log.exception("telegram_agent_failed", error=str(exc))
         reply = "Sorry, something went wrong. Please try again in a moment."
+        # Record the fallback reply so conversation history stays coherent —
+        # without this the next message has no AI context (no assistant turns).
+        try:
+            async with UnitOfWork(session):
+                await conv_svc.record_assistant_reply(
+                    conversation=conversation,
+                    content=reply,
+                )
+        except Exception:
+            pass
 
     try:
         bot_token = (tg_credentials or {}).get("bot_token") or None

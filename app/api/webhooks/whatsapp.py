@@ -219,6 +219,14 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> uuid.UU
         )
         return None
 
+    # Load entitlements so plan restrictions (tools, model) are enforced.
+    try:
+        from app.repositories.entitlements import EntitlementRepository
+        async with SessionFactory() as ent_session:
+            ents = await EntitlementRepository(ent_session).resolved(business.id)
+    except Exception:
+        ents = None
+
     # Run agent turn — the runner opens its own UnitOfWork to commit its writes.
     try:
         ctx = ToolContext(
@@ -227,7 +235,7 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> uuid.UU
             customer=customer,
             conversation=conversation,
         )
-        runner = build_agent_runner(ctx)
+        runner = build_agent_runner(ctx, entitlements=ents)
         reply = await runner.run(
             history=history,
             user_text=msg.text or "[non-text message]",
@@ -237,6 +245,14 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> uuid.UU
     except Exception as exc:
         log.exception("whatsapp_agent_failed", error=str(exc))
         reply = "Sorry, something went wrong. Please try again in a moment."
+        try:
+            async with UnitOfWork(session):
+                await conv_svc.record_assistant_reply(
+                    conversation=conversation,
+                    content=reply,
+                )
+        except Exception:
+            pass
 
     # Send reply back using per-business credentials if available.
     try:
