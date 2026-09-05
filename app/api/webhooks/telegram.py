@@ -19,6 +19,7 @@ Register the webhook URL with Telegram once via:
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import structlog
@@ -164,6 +165,7 @@ async def _handle_message(
     business_slug: str | None = None,
     tg_credentials: dict | None = None,
 ) -> None:
+    started_at = time.monotonic()
     bind_request_context(channel="telegram", external_id=msg.chat_id)
 
     slug = business_slug
@@ -260,8 +262,19 @@ async def _handle_message(
         bot_token = (tg_credentials or {}).get("bot_token") or None
         tg_client = TelegramClient(bot_token=bot_token)
         await tg_client.send_message(chat_id=msg.chat_id, text=reply)
-        log.info("telegram_reply_sent", chat_id=msg.chat_id)
+        channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+        log.info(
+            "telegram_reply_sent",
+            chat_id=msg.chat_id,
+            channel_latency_ms=channel_latency_ms,
+        )
     except ProviderError as exc:
-        log.error("telegram_send_failed", chat_id=msg.chat_id, error=str(exc))
+        channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+        log.error(
+            "telegram_send_failed",
+            chat_id=msg.chat_id,
+            error=str(exc),
+            channel_latency_ms=channel_latency_ms,
+        )
     finally:
         clear_request_context()

@@ -20,6 +20,7 @@ WhatsApp customer.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import structlog
@@ -128,6 +129,7 @@ class ChatResponse(BaseModel):
     conversation_state: str
     tools_used: list[ToolCall]
     model_used: str
+    channel_latency_ms: int | None = None
 
 
 class HistoryMessage(BaseModel):
@@ -174,6 +176,7 @@ async def chat(
     session: AsyncSession = Depends(get_session),
 ) -> ChatResponse:
     """Send one message to the agent and get its reply synchronously."""
+    started_at = time.monotonic()
     slug = body.business_slug
     if not slug:
         raise NotFoundError(
@@ -264,11 +267,13 @@ async def chat(
         _trailing_tool_calls(after_history, inbound.id) if inbound is not None else []
     )
 
+    channel_latency_ms = int((time.monotonic() - started_at) * 1000)
     log.info(
         "web_chat_reply",
         business=slug,
         conversation_id=str(conversation.id),
         tools=[t.tool for t in tools_used],
+        channel_latency_ms=channel_latency_ms,
     )
 
     return ChatResponse(
@@ -279,6 +284,7 @@ async def chat(
         conversation_state=conversation.current_state,
         tools_used=tools_used,
         model_used=model_used,
+        channel_latency_ms=channel_latency_ms,
     )
 
 

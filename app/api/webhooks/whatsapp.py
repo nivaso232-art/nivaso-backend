@@ -21,6 +21,7 @@ Two endpoints:
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import structlog
@@ -151,6 +152,7 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> uuid.UU
 
     Returns the resolved business_id so the caller can stamp the webhook_event row.
     """
+    started_at = time.monotonic()
     bind_request_context(channel="whatsapp", external_id=msg.wa_id)
 
     wa_credentials: dict = {}
@@ -261,9 +263,21 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> uuid.UU
             access_token=wa_credentials.get("access_token") or None,
         )
         wamid = await wa_client.send_text(to=msg.wa_id, text=reply)
-        log.info("whatsapp_reply_sent", to=msg.wa_id, wamid=wamid)
+        channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+        log.info(
+            "whatsapp_reply_sent",
+            to=msg.wa_id,
+            wamid=wamid,
+            channel_latency_ms=channel_latency_ms,
+        )
     except ProviderError as exc:
-        log.error("whatsapp_send_failed", to=msg.wa_id, error=str(exc))
+        channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+        log.error(
+            "whatsapp_send_failed",
+            to=msg.wa_id,
+            error=str(exc),
+            channel_latency_ms=channel_latency_ms,
+        )
     finally:
         clear_request_context()
 
