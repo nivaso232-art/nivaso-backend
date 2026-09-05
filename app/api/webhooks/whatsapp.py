@@ -61,17 +61,26 @@ async def verify_webhook(
 ) -> Response:
     """Meta webhook verification challenge."""
     if hub_mode == "subscribe":
-        # 1. Check global env var first.
-        if settings.whatsapp_verify_token:
-            if hub_verify_token == settings.whatsapp_verify_token:
-                return Response(content=hub_challenge, media_type="text/plain")
-        else:
-            # 2. Fall back: check any active WhatsApp channel's stored verify_token.
+        # Resolve expected token: env var → DB → None (unconfigured)
+        expected: str | None = settings.whatsapp_verify_token or None
+
+        if expected is None:
             async with SessionFactory() as s:
                 channels = await BusinessChannelRepository(s).list_by_channel_type("whatsapp")
                 for ch in channels:
-                    if ch.credentials.get("verify_token") == hub_verify_token:
-                        return Response(content=hub_challenge, media_type="text/plain")
+                    stored = ch.credentials.get("verify_token", "")
+                    if stored:
+                        expected = stored
+                        break
+
+        if expected is None:
+            # No verify token configured anywhere — accept any challenge.
+            # Real security comes from HMAC on POST requests.
+            log.warning("whatsapp_verify_token_not_configured_accepting_challenge")
+            return Response(content=hub_challenge, media_type="text/plain")
+
+        if hub_verify_token == expected:
+            return Response(content=hub_challenge, media_type="text/plain")
 
     log.warning("whatsapp_verification_failed", mode=hub_mode)
     return Response(status_code=status.HTTP_403_FORBIDDEN)
