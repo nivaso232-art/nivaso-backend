@@ -21,6 +21,7 @@ Two endpoints:
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
@@ -59,17 +60,20 @@ async def verify_webhook(
     hub_challenge: str = Query(alias="hub.challenge", default=""),
 ) -> Response:
     """Meta webhook verification challenge."""
-    if (
-        hub_mode == "subscribe"
-        and hub_verify_token == settings.whatsapp_verify_token
-    ):
-        return Response(content=hub_challenge, media_type="text/plain")
+    if hub_mode == "subscribe":
+        # 1. Check global env var first.
+        if settings.whatsapp_verify_token:
+            if hub_verify_token == settings.whatsapp_verify_token:
+                return Response(content=hub_challenge, media_type="text/plain")
+        else:
+            # 2. Fall back: check any active WhatsApp channel's stored verify_token.
+            async with SessionFactory() as s:
+                channels = await BusinessChannelRepository(s).list_by_channel_type("whatsapp")
+                for ch in channels:
+                    if ch.credentials.get("verify_token") == hub_verify_token:
+                        return Response(content=hub_challenge, media_type="text/plain")
 
-    log.warning(
-        "whatsapp_verification_failed",
-        mode=hub_mode,
-        token_match=hub_verify_token == settings.whatsapp_verify_token,
-    )
+    log.warning("whatsapp_verification_failed", mode=hub_mode)
     return Response(status_code=status.HTTP_403_FORBIDDEN)
 
 
@@ -82,17 +86,46 @@ async def receive_webhook(
     """Inbound WhatsApp messages."""
     raw_body = await request.body()
 
-    try:
-        verify_meta_signature(
-            app_secret=settings.whatsapp_app_secret,
-            payload=raw_body,
-            header=x_hub_signature_256,
-        )
-    except SignatureError as exc:
-        log.warning("whatsapp_signature_invalid", error=str(exc))
-        return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+    # Resolve app_secret: global env var takes priority; fall back to the
+    # per-business secret stored in business_channels.credentials.
+    app_secret = settings.whatsapp_app_secret
+    if not app_secret:
+        try:
+            _data = json.loads(raw_body)
+            _phone_id = (
+                _data.get("entry", [{}])[0]
+                .get("changes", [{}])[0]
+                .get("value", {})
+                .get("metadata", {})
+                .get("phone_number_id", "")
+            )
+            if _phone_id:
+                async with SessionFactory() as _s:
+                    _ch = await BusinessChannelRepository(_s).get_by_external_id(
+                        "whatsapp", _phone_id
+                    )
+                    if _ch:
+                        app_secret = _ch.credentials.get("app_secret", "")
+        except Exception:
+            pass
 
-    payload = await request.json()
+    if app_secret:
+        try:
+            verify_meta_signature(
+                app_secret=app_secret,
+                payload=raw_body,
+                header=x_hub_signature_256,
+            )
+        except SignatureError as exc:
+            log.warning("whatsapp_signature_invalid", error=str(exc))
+            return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+    else:
+        log.warning(
+            "whatsapp_app_secret_not_configured",
+            hint="Set WHATSAPP_APP_SECRET env var or save app_secret in channel config",
+        )
+
+    payload = json.loads(raw_body)
 
     # Return 200 immediately — Meta retries on any non-2xx, and a slow agent
     # must not cause duplicate deliveries. Processing happens in background.

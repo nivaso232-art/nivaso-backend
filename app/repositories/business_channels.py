@@ -44,6 +44,15 @@ class BusinessChannelRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def list_by_channel_type(
+        self, channel_type: str
+    ) -> Sequence[BusinessChannel]:
+        stmt = select(BusinessChannel).where(
+            BusinessChannel.channel_type == channel_type,
+            BusinessChannel.is_active.is_(True),
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
     async def list_for_business(
         self, business_id: uuid.UUID
     ) -> Sequence[BusinessChannel]:
