@@ -142,7 +142,8 @@ async def update_rule(
     updates["updated_by"] = "super-admin"
 
     async with UnitOfWork(session):
-        rule = await BusinessRuleRepository(session).update(rule, updates)
+        await BusinessRuleRepository(session).update(rule, updates)
+        await session.refresh(rule)
     return _out(rule)
 
 
