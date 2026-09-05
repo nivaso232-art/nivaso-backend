@@ -238,12 +238,26 @@ class GeminiAgentRunner:
         # real error.
         conversation_id_str = str(self.ctx.conversation_id)
 
+        # Load AI Playbook rules.
+        from app.repositories.business_rules import BusinessRuleRepository
+        from app.repositories.entitlements import EntitlementRepository
+        try:
+            ent_row = await EntitlementRepository(self.ctx.session).get(self.ctx.business_id)
+            _plan = ent_row.plan if ent_row else None
+            _ents = await EntitlementRepository(self.ctx.session).resolved(self.ctx.business_id)
+            _rules = await BusinessRuleRepository(self.ctx.session).get_for_business(
+                self.ctx.business_id, plan=_plan, entitlements=_ents
+            )
+        except Exception:
+            _rules = []
+
         # build_cached_system returns Anthropic-style text blocks; Gemini takes a
         # plain system_instruction string, so pull the text back out.
         system_blocks = build_cached_system(
             self.ctx.business,
             categories=categories,
             knowledge_titles=knowledge_titles,
+            rules=_rules,
         )
         system_text = system_blocks[0]["text"]
 

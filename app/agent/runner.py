@@ -233,10 +233,24 @@ class AgentRunner:
         # lazy reload (MissingGreenlet) that masks the real error.
         conversation_id_str = str(self.ctx.conversation_id)
 
+        # Load AI Playbook rules for this business (global + plan + business-specific).
+        from app.repositories.business_rules import BusinessRuleRepository
+        from app.repositories.entitlements import EntitlementRepository
+        try:
+            ent_row = await EntitlementRepository(self.ctx.session).get(self.ctx.business_id)
+            _plan = ent_row.plan if ent_row else None
+            _ents = await EntitlementRepository(self.ctx.session).resolved(self.ctx.business_id)
+            _rules = await BusinessRuleRepository(self.ctx.session).get_for_business(
+                self.ctx.business_id, plan=_plan, entitlements=_ents
+            )
+        except Exception:
+            _rules = []
+
         system = build_cached_system(
             self.ctx.business,
             categories=categories,
             knowledge_titles=knowledge_titles,
+            rules=_rules,
         )
 
         turn_ctx = build_turn_context(

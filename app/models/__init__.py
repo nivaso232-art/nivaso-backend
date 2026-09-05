@@ -9,6 +9,7 @@ migrations.
 from app.models.agent_run import AgentRun
 from app.models.base import Base
 from app.models.business import Business
+from app.models.business_rule import BusinessRule
 from app.models.business_admin import BusinessAdmin
 from app.models.business_entitlement import BusinessEntitlement
 from app.models.conversation import Conversation, Message
@@ -30,6 +31,7 @@ __all__ = [
     "Base",
     "Business",
     "BusinessAdmin",
+    "BusinessRule",
     "BusinessEntitlement",
     "Conversation",
     "Customer",

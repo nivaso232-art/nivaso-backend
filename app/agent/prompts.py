@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.models.business import Business
+from app.models.business_rule import BusinessRule
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.order import Order
@@ -101,6 +102,7 @@ def build_cached_system(
     *,
     categories: Sequence[str] = (),
     knowledge_titles: Sequence[str] = (),
+    rules: Sequence[BusinessRule] = (),
 ) -> list[dict[str, Any]]:
     """The cacheable system block.
 
@@ -175,6 +177,16 @@ def build_cached_system(
             f"{listed}\n"
             "(Search by symptom in English, not by these titles.)"
         )
+
+    # ── AI Playbook rules (super-admin configurable) ──────────────────────────
+    # Rules are sorted by priority and injected as a structured playbook section.
+    # They override the default "How to work" behaviour for this business/plan.
+    if rules:
+        rule_lines = "\n".join(
+            f"- [{r.trigger}] {r.instruction}"
+            for r in sorted(rules, key=lambda r: r.priority)
+        )
+        sections.append(f"## Playbook — follow these rules exactly\n{rule_lines}")
 
     text = "\n\n".join(sections)
 

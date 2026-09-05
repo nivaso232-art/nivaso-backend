@@ -36,6 +36,7 @@ from app.api.admin import (
     webhook_events,
 )
 from app.api.super_admin import audit_log as super_audit_log
+from app.api.super_admin import business_rules as super_business_rules
 from app.api.super_admin import businesses as super_businesses
 from app.api.super_admin import chat as super_chat
 from app.api.super_admin import feature_requests as super_feature_requests
@@ -136,6 +137,7 @@ app.include_router(dashboard.router, prefix="/admin", dependencies=_admin_deps)
 # -- Super-admin routes (Nivaso operators only — separate key) ----------------
 _super_deps = [Depends(require_super_admin_auth)]
 app.include_router(super_businesses.router, prefix="/super-admin", dependencies=_super_deps)
+app.include_router(super_business_rules.router, prefix="/super-admin", dependencies=_super_deps)
 app.include_router(super_chat.router, prefix="/super-admin", dependencies=_super_deps)
 app.include_router(super_feature_requests.router, prefix="/super-admin", dependencies=_super_deps)
 app.include_router(super_audit_log.router, prefix="/super-admin", dependencies=_super_deps)
