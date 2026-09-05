@@ -171,6 +171,8 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "search_knowledge",
             # ── support ────────────────────────────────────────────────────
             "create_support_ticket",
+            "list_open_tickets",
+            "update_support_ticket",
             # ── delivery ───────────────────────────────────────────────────
             "get_my_credentials",
             # ── platform (mandatory baseline, no dependency gate) ──────────
@@ -219,6 +221,8 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "get_full_article",           # new: Starter+
             # ── support ────────────────────────────────────────────────────
             "create_support_ticket",
+            "list_open_tickets",
+            "update_support_ticket",
             # ── delivery ───────────────────────────────────────────────────
             "get_my_credentials",
             # ── platform (mandatory baseline) ──────────────────────────────
@@ -282,6 +286,8 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "get_full_article",
             # ── support ────────────────────────────────────────────────────
             "create_support_ticket",
+            "list_open_tickets",
+            "update_support_ticket",
             # ── delivery ───────────────────────────────────────────────────
             "get_my_credentials",
             # ── platform (mandatory baseline) ──────────────────────────────
