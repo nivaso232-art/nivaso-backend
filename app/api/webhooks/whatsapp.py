@@ -21,6 +21,10 @@ Two endpoints:
 
 from __future__ import annotations
 
+import json
+import time
+import uuid
+
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Header, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +40,7 @@ from app.core.security import verify_meta_signature
 from app.core.uow import UnitOfWork
 from app.models.enums import Channel, MessageType
 from app.providers.whatsapp.client import WhatsAppClient
+from app.repositories.business_channels import BusinessChannelRepository
 from app.repositories.businesses import BusinessRepository
 from app.repositories.webhook_events import WebhookEventRepository
 from app.models.enums import WebhookSource
@@ -55,17 +60,20 @@ async def verify_webhook(
     hub_challenge: str = Query(alias="hub.challenge", default=""),
 ) -> Response:
     """Meta webhook verification challenge."""
-    if (
-        hub_mode == "subscribe"
-        and hub_verify_token == settings.whatsapp_verify_token
-    ):
-        return Response(content=hub_challenge, media_type="text/plain")
+    if hub_mode == "subscribe":
+        # 1. Check global env var first.
+        if settings.whatsapp_verify_token:
+            if hub_verify_token == settings.whatsapp_verify_token:
+                return Response(content=hub_challenge, media_type="text/plain")
+        else:
+            # 2. Fall back: check any active WhatsApp channel's stored verify_token.
+            async with SessionFactory() as s:
+                channels = await BusinessChannelRepository(s).list_by_channel_type("whatsapp")
+                for ch in channels:
+                    if ch.credentials.get("verify_token") == hub_verify_token:
+                        return Response(content=hub_challenge, media_type="text/plain")
 
-    log.warning(
-        "whatsapp_verification_failed",
-        mode=hub_mode,
-        token_match=hub_verify_token == settings.whatsapp_verify_token,
-    )
+    log.warning("whatsapp_verification_failed", mode=hub_mode)
     return Response(status_code=status.HTTP_403_FORBIDDEN)
 
 
@@ -78,17 +86,46 @@ async def receive_webhook(
     """Inbound WhatsApp messages."""
     raw_body = await request.body()
 
-    try:
-        verify_meta_signature(
-            app_secret=settings.whatsapp_app_secret,
-            payload=raw_body,
-            header=x_hub_signature_256,
-        )
-    except SignatureError as exc:
-        log.warning("whatsapp_signature_invalid", error=str(exc))
-        return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+    # Resolve app_secret: global env var takes priority; fall back to the
+    # per-business secret stored in business_channels.credentials.
+    app_secret = settings.whatsapp_app_secret
+    if not app_secret:
+        try:
+            _data = json.loads(raw_body)
+            _phone_id = (
+                _data.get("entry", [{}])[0]
+                .get("changes", [{}])[0]
+                .get("value", {})
+                .get("metadata", {})
+                .get("phone_number_id", "")
+            )
+            if _phone_id:
+                async with SessionFactory() as _s:
+                    _ch = await BusinessChannelRepository(_s).get_by_external_id(
+                        "whatsapp", _phone_id
+                    )
+                    if _ch:
+                        app_secret = _ch.credentials.get("app_secret", "")
+        except Exception:
+            pass
 
-    payload = await request.json()
+    if app_secret:
+        try:
+            verify_meta_signature(
+                app_secret=app_secret,
+                payload=raw_body,
+                header=x_hub_signature_256,
+            )
+        except SignatureError as exc:
+            log.warning("whatsapp_signature_invalid", error=str(exc))
+            return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+    else:
+        log.warning(
+            "whatsapp_app_secret_not_configured",
+            hint="Set WHATSAPP_APP_SECRET env var or save app_secret in channel config",
+        )
+
+    payload = json.loads(raw_body)
 
     # Return 200 immediately — Meta retries on any non-2xx, and a slow agent
     # must not cause duplicate deliveries. Processing happens in background.
@@ -124,30 +161,51 @@ async def _process_whatsapp_payload(
                 return
             await webhook_repo.mark_processing(event)
 
+        resolved_business_id: uuid.UUID | None = None
         try:
             for msg in messages:
-                await _handle_message(session, msg)
+                bid = await _handle_message(session, msg)
+                if bid is not None and resolved_business_id is None:
+                    resolved_business_id = bid
 
             async with UnitOfWork(session):
-                await webhook_repo.mark_processed(event)
+                await webhook_repo.mark_processed(event, business_id=resolved_business_id)
         except Exception as exc:
             log.exception("whatsapp_processing_failed", error=str(exc))
             async with UnitOfWork(session):
                 await webhook_repo.mark_failed(event, str(exc))
 
 
-async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
-    """Resolve context, run the agent turn, send the reply."""
+async def _handle_message(session: AsyncSession, msg: InboundMessage) -> uuid.UUID | None:
+    """Resolve context, run the agent turn, send the reply.
+
+    Routing: business_channels table — match by phone_number_id (multi-tenant, DB-driven).
+    No fallback. Configure the phone number in the admin panel:
+      Business → Channels → WhatsApp
+
+    Returns the resolved business_id so the caller can stamp the webhook_event row.
+    """
+    started_at = time.monotonic()
     bind_request_context(channel="whatsapp", external_id=msg.wa_id)
 
-    if not settings.default_business_slug:
-        log.error("whatsapp_no_business_slug_configured")
-        return
+    wa_credentials: dict = {}
 
     try:
         async with UnitOfWork(session):
             businesses = BusinessRepository(session)
-            business = await businesses.get_active_or_raise(settings.default_business_slug)
+            ch_repo = BusinessChannelRepository(session)
+
+            channel_cfg = await ch_repo.get_by_external_id("whatsapp", msg.phone_number_id)
+            if not channel_cfg:
+                log.error(
+                    "whatsapp_no_business_for_phone_number",
+                    phone_number_id=msg.phone_number_id,
+                    hint="Configure this number: Admin → Business → Channels → WhatsApp",
+                )
+                return None
+
+            business = await businesses.get_or_raise(channel_cfg.business_id)
+            wa_credentials = channel_cfg.credentials
 
             customer_svc = CustomerService(session, business.id)
             customer, channel_row = await customer_svc.resolve_or_create(
@@ -189,8 +247,20 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
             knowledge_titles = [a["title"] for a in summary]
 
     except NotFoundError as exc:
-        log.error("whatsapp_business_not_found", slug=settings.default_business_slug, error=str(exc))
-        return
+        log.error(
+            "whatsapp_business_inactive",
+            phone_number_id=msg.phone_number_id,
+            error=str(exc),
+        )
+        return None
+
+    # Load entitlements so plan restrictions (tools, model) are enforced.
+    try:
+        from app.repositories.entitlements import EntitlementRepository
+        async with SessionFactory() as ent_session:
+            ents = await EntitlementRepository(ent_session).resolved(business.id)
+    except Exception:
+        ents = None
 
     # Run agent turn — the runner opens its own UnitOfWork to commit its writes.
     try:
@@ -200,7 +270,7 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
             customer=customer,
             conversation=conversation,
         )
-        runner = build_agent_runner(ctx)
+        runner = build_agent_runner(ctx, entitlements=ents)
         reply = await runner.run(
             history=history,
             user_text=msg.text or "[non-text message]",
@@ -210,16 +280,41 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> None:
     except Exception as exc:
         log.exception("whatsapp_agent_failed", error=str(exc))
         reply = "Sorry, something went wrong. Please try again in a moment."
+        try:
+            async with UnitOfWork(session):
+                await conv_svc.record_assistant_reply(
+                    conversation=conversation,
+                    content=reply,
+                )
+        except Exception:
+            pass
 
-    # Send reply back to the customer.
+    # Send reply back using per-business credentials if available.
     try:
-        wa_client = WhatsAppClient()
+        wa_client = WhatsAppClient(
+            phone_number_id=wa_credentials.get("phone_number_id") or None,
+            access_token=wa_credentials.get("access_token") or None,
+        )
         wamid = await wa_client.send_text(to=msg.wa_id, text=reply)
-        log.info("whatsapp_reply_sent", to=msg.wa_id, wamid=wamid)
+        channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+        log.info(
+            "whatsapp_reply_sent",
+            to=msg.wa_id,
+            wamid=wamid,
+            channel_latency_ms=channel_latency_ms,
+        )
     except ProviderError as exc:
-        log.error("whatsapp_send_failed", to=msg.wa_id, error=str(exc))
+        channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+        log.error(
+            "whatsapp_send_failed",
+            to=msg.wa_id,
+            error=str(exc),
+            channel_latency_ms=channel_latency_ms,
+        )
     finally:
         clear_request_context()
+
+    return business.id
 
 
 def _map_type(raw: str) -> MessageType:

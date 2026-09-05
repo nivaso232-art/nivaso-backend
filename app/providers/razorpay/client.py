@@ -51,13 +51,20 @@ class PaymentLinkStatus:
 class RazorpayClient:
     """Thin async wrapper around the Razorpay Payment Links API."""
 
-    def __init__(self) -> None:
-        if not settings.razorpay_key_id or not settings.razorpay_key_secret:
+    def __init__(
+        self,
+        *,
+        key_id: str | None = None,
+        key_secret: str | None = None,
+    ) -> None:
+        k = key_id or settings.razorpay_key_id
+        s = key_secret or settings.razorpay_key_secret
+        if not k or not s:
             raise ProviderError(
                 "Razorpay credentials not configured "
                 "(RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET missing)"
             )
-        self._auth = (settings.razorpay_key_id, settings.razorpay_key_secret)
+        self._auth = (k, s)
 
     @retry(
         stop=stop_after_attempt(3),

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.agent.context import ToolContext
-from app.agent.tools.base import ToolSpec, enum_prop, schema, string_prop
+from app.agent.tools.base import ToolSpec, enum_prop, integer_prop, schema, string_prop
 from app.core.ids import normalize_reference
 from app.models.enums import ConversationState, TicketPriority
 
@@ -70,6 +70,111 @@ async def create_support_ticket(
             "resolution time."
         ),
     }
+
+
+async def list_open_tickets(
+    ctx: ToolContext, limit: int | None = None
+) -> dict[str, Any]:
+    """Return the current customer's support tickets, newest first."""
+    from app.repositories.support_tickets import SupportTicketRepository
+
+    cap = min(limit or 5, 10) if limit else 5
+    repo = SupportTicketRepository(ctx.session, ctx.business_id)
+    tickets = await repo.list_for_customer(ctx.customer_id, limit=cap)
+
+    if not tickets:
+        return {"count": 0, "tickets": [], "note": "No support tickets found for your account."}
+
+    return {
+        "count": len(tickets),
+        "tickets": [
+            {
+                "reference": t.reference,
+                "reason": t.reason,
+                "status": t.status.value,
+                "priority": t.priority.value,
+                "summary": t.summary,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            }
+            for t in tickets
+        ],
+    }
+
+
+LIST_OPEN_TICKETS = ToolSpec(
+    name="list_open_tickets",
+    description=(
+        "Return the customer's support tickets (open and recently resolved), newest "
+        "first. Use when the customer asks 'what's the status of my complaint?' or "
+        "'did my ticket get resolved?' without quoting a specific reference."
+    ),
+    input_schema=schema(
+        properties={
+            "limit": integer_prop(
+                "Maximum tickets to return (1–10). Defaults to 5.",
+                minimum=1,
+                maximum=10,
+                nullable=True,
+            ),
+        }
+    ),
+    handler=list_open_tickets,
+)
+
+
+async def update_support_ticket(
+    ctx: ToolContext, ticket_reference: str, additional_info: str
+) -> dict[str, Any]:
+    """Append additional information to an existing open support ticket."""
+    from app.repositories.support_tickets import SupportTicketRepository
+
+    repo = SupportTicketRepository(ctx.session, ctx.business_id)
+    ticket = await repo.get_by_reference(ticket_reference)
+
+    if ticket is None or ticket.customer_id != ctx.customer_id:
+        return {"error": f"Ticket {ticket_reference!r} not found on your account."}
+
+    if not ticket.is_open:
+        return {
+            "error": f"Ticket {ticket_reference!r} is already resolved and cannot be updated.",
+            "status": ticket.status.value,
+        }
+
+    ticket.summary = (
+        ((ticket.summary or "") + f"\n\nCustomer update: {additional_info}").strip()
+    )
+    await ctx.session.flush()
+
+    return {
+        "ticket_reference": ticket.reference,
+        "status": ticket.status.value,
+        "message": (
+            f"Your update has been added to ticket {ticket.reference}. "
+            "A team member will review it."
+        ),
+    }
+
+
+UPDATE_SUPPORT_TICKET = ToolSpec(
+    name="update_support_ticket",
+    description=(
+        "Add more information to an existing open support ticket. Use when a customer "
+        "wants to provide an update or forgotten detail after a ticket was already "
+        "created — for example, their order reference or a screenshot description. "
+        "The ticket_reference comes from create_support_ticket or list_open_tickets."
+    ),
+    input_schema=schema(
+        properties={
+            "ticket_reference": string_prop(
+                "The ticket reference, e.g. 'TKT-2608-AB12CD'."
+            ),
+            "additional_info": string_prop(
+                "The additional information to append. Write in English."
+            ),
+        }
+    ),
+    handler=update_support_ticket,
+)
 
 
 CREATE_SUPPORT_TICKET = ToolSpec(

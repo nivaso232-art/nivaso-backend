@@ -9,10 +9,13 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_business, get_session
-from app.core.errors import NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError
 from app.core.uow import UnitOfWork
+from app.entitlements.flags import FeatureFlag
+from app.entitlements.resolver import get_limit, resolve
 from app.models.business import Business
 from app.models.enums import KnowledgeStatus
+from app.repositories.entitlements import EntitlementRepository
 from app.models.knowledge import Knowledge
 from app.repositories.knowledge import KnowledgeRepository
 
@@ -78,6 +81,17 @@ async def create_article(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> KnowledgeOut:
+    ent_repo = EntitlementRepository(session)
+    ent = await ent_repo.get_or_create(business.id)
+    limit = get_limit(resolve(ent.plan, ent.overrides), FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT)
+    if limit is not None:
+        repo = KnowledgeRepository(session, business.id)
+        count = await repo.count()
+        if count >= limit:
+            raise ForbiddenError(
+                f"Knowledge article limit reached ({limit}). Upgrade your plan to add more.",
+                details={"limit": limit, "current": count, "flag": FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT},
+            )
     article = Knowledge(
         title=body.title,
         content=body.content,

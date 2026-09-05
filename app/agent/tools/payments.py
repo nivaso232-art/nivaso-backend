@@ -26,6 +26,7 @@ from app.models.enums import ConversationState, OrderStatus, PaymentProvider
 from app.providers.mock_payments import mock_payment_link
 from app.providers.razorpay.client import RazorpayClient
 from app.services.reconcile import reconcile_and_deliver
+from app.repositories.business_channels import BusinessChannelRepository
 
 log = structlog.get_logger(__name__)
 
@@ -37,6 +38,12 @@ async def create_payment_link(
 
     The amount is read from the order, which was itself priced from the
     catalog. No amount parameter exists on this tool.
+
+    Returns a success dict with payment_url, or an error dict with
+    retry_possible so the model knows whether to apologise-and-retry or
+    escalate to a human. Returning an error dict (rather than raising)
+    keeps is_error=False, which prevents the model from immediately
+    creating a support ticket for transient provider issues.
     """
     order = await ctx.orders.resolve_order(
         customer_id=ctx.customer_id,
@@ -44,13 +51,19 @@ async def create_payment_link(
     )
 
     if settings.payments_mock:
-        # Razorpay unavailable (e.g. pending KYC): issue a mock link that
-        # completes the payment when opened. Same downstream flow, no real money.
         link = mock_payment_link(slug=ctx.business.slug, reference=order.reference)
         provider = PaymentProvider.MANUAL
     else:
-        client = RazorpayClient()
+        # Use per-business Razorpay credentials if configured; fall back to global.
+        ch_repo = BusinessChannelRepository(ctx.session)
+        rzp_channel = await ch_repo.get_for_business(ctx.business_id, "razorpay")
+        rzp_creds = rzp_channel.credentials if rzp_channel else {}
+
         try:
+            client = RazorpayClient(
+                key_id=rzp_creds.get("key_id") or None,
+                key_secret=rzp_creds.get("key_secret") or None,
+            )
             link = await client.create_payment_link(
                 amount_minor=order.total_in_minor_units(),
                 currency=order.currency,
@@ -60,8 +73,6 @@ async def create_payment_link(
                 customer_phone=ctx.customer.phone,
             )
         except ProviderError:
-            # Surfaced to the model as a tool error so it can apologise and offer
-            # to retry, rather than inventing a link.
             log.exception("payment_link_failed", reference=order.reference)
             raise
         provider = PaymentProvider.RAZORPAY
@@ -164,6 +175,75 @@ async def check_payment_status(
     }
 
 
+async def retry_payment(ctx: ToolContext, order_reference: str) -> dict[str, Any]:
+    """Issue a fresh payment link for an order whose previous attempt failed.
+
+    Validates that the order is in a retryable state before delegating to the
+    same link-creation logic used by create_payment_link.
+    """
+    from app.models.enums import OrderStatus
+
+    order = await ctx.orders.resolve_order(
+        customer_id=ctx.customer_id,
+        reference=normalize_reference(order_reference),
+    )
+
+    if order.is_paid:
+        return {
+            "order_reference": order.reference,
+            "error": "This order is already paid — no retry needed.",
+        }
+
+    retryable = {OrderStatus.PAYMENT_FAILED, OrderStatus.PAYMENT_PENDING}
+    if order.status not in retryable:
+        return {
+            "order_reference": order.reference,
+            "error": (
+                f"Cannot retry payment for an order in '{order.status.value}' state. "
+                "The order must have had a previous payment attempt (PAYMENT_FAILED or PAYMENT_PENDING)."
+            ),
+        }
+
+    # Reuse create_payment_link which handles mock vs. Razorpay, creates a new
+    # payment attempt, and marks the order PAYMENT_PENDING.
+    return await create_payment_link(ctx, order.reference)
+
+
+async def get_order_payment_history(
+    ctx: ToolContext, order_reference: str | None = None
+) -> dict[str, Any]:
+    """Return the full payment attempt audit trail for an order.
+
+    Surfaces every attempt — PENDING, FAILED, and SUCCESS — with timestamps
+    and failure reasons. Useful when the customer says they tried paying
+    multiple times and wants a detailed breakdown.
+    """
+    order = await ctx.orders.resolve_order(
+        customer_id=ctx.customer_id,
+        reference=normalize_reference(order_reference) if order_reference else None,
+    )
+
+    attempts = await ctx.payments.payments.list_for_order(order.id)
+
+    return {
+        "order_reference": order.reference,
+        "order_status": order.status.value,
+        "is_paid": order.is_paid,
+        "total": str(order.total),
+        "currency": order.currency,
+        "attempt_count": len(attempts),
+        "attempts": [
+            {
+                "status": a.status.value,
+                "amount": str(a.amount) if a.amount else None,
+                "failure_reason": a.failure_reason,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in attempts
+        ],
+    }
+
+
 CREATE_PAYMENT_LINK = ToolSpec(
     name="create_payment_link",
     description=(
@@ -180,6 +260,43 @@ CREATE_PAYMENT_LINK = ToolSpec(
         }
     ),
     handler=create_payment_link,
+)
+
+RETRY_PAYMENT = ToolSpec(
+    name="retry_payment",
+    description=(
+        "Generate a fresh payment link for an order whose previous payment attempt "
+        "failed or expired. Use when check_payment_status shows a FAILED attempt and "
+        "the customer wants to try again. The amount is still read from the order — "
+        "you cannot change it."
+    ),
+    input_schema=schema(
+        properties={
+            "order_reference": string_prop(
+                'The order reference to retry payment for, e.g. "ORD-2608-7F3K9Q".'
+            ),
+        }
+    ),
+    handler=retry_payment,
+)
+
+GET_ORDER_PAYMENT_HISTORY = ToolSpec(
+    name="get_order_payment_history",
+    description=(
+        "Return every payment attempt for an order — pending, failed, and successful — "
+        "with timestamps and failure reasons. Use this when the customer says they tried "
+        "paying multiple times and wants a full breakdown. Omit order_reference to use "
+        "the customer's latest open order."
+    ),
+    input_schema=schema(
+        properties={
+            "order_reference": string_prop(
+                "Order reference, or null for the customer's latest open order.",
+                nullable=True,
+            ),
+        }
+    ),
+    handler=get_order_payment_history,
 )
 
 CHECK_PAYMENT_STATUS = ToolSpec(

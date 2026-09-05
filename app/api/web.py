@@ -20,10 +20,11 @@ WhatsApp customer.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +51,42 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/web", tags=["web"])
 
 
+def _caller_is_admin(
+    authorization: str | None,
+    x_internal_key: str | None,
+) -> bool:
+    """Return True if the request is authenticated as a business admin.
+
+    Two accepted proofs:
+    - A valid JWT with role "admin" or "super_admin"  (admin portal login)
+    - The X-Internal-Key header matching settings.internal_api_key
+
+    Real customers coming from the web-embed widget or channels carry neither,
+    so they are always treated as non-admin regardless of the request body.
+    This check is intentionally server-side: no body flag that a caller can
+    forge substitutes for a cryptographically verified identity.
+    """
+    if x_internal_key:
+        try:
+            from app.core.security import verify_internal_api_key
+            verify_internal_api_key(
+                expected=settings.internal_api_key, provided=x_internal_key
+            )
+            return True
+        except Exception:
+            pass
+
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            from app.core.jwt import decode_token
+            claims = decode_token(authorization.split(" ", 1)[1])
+            return claims.get("role") in ("admin", "super_admin")
+        except Exception:
+            pass
+
+    return False
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, description="The customer's message.")
     user_id: str = Field(
@@ -59,7 +96,7 @@ class ChatRequest(BaseModel):
     )
     business_slug: str | None = Field(
         default=None,
-        description="Which tenant to talk to. Falls back to DEFAULT_BUSINESS_SLUG.",
+        description="Which tenant to talk to. Required — there is no default.",
     )
     display_name: str | None = Field(default=None)
     provider: str | None = Field(
@@ -68,7 +105,14 @@ class ChatRequest(BaseModel):
     )
     model: str | None = Field(
         default=None,
-        description="Override the model ID (e.g. 'claude-sonnet-4-6', 'gemini-2.5-flash').",
+        description="Override the model ID (e.g. 'claude-sonnet-4-6', 'gemini-3.6-flash').",
+    )
+    admin_mode: bool = Field(
+        default=False,
+        description=(
+            "Unlock admin-only tools (knowledge base create/update/list). "
+            "Only accepted from requests that already have the X-Internal-Key header."
+        ),
     )
 
 
@@ -85,6 +129,7 @@ class ChatResponse(BaseModel):
     conversation_state: str
     tools_used: list[ToolCall]
     model_used: str
+    channel_latency_ms: int | None = None
 
 
 class HistoryMessage(BaseModel):
@@ -126,14 +171,17 @@ def _trailing_tool_calls(history: Any, after_message_id: Any) -> list[ToolCall]:
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
+    authorization: str | None = Header(default=None),
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Key"),
     session: AsyncSession = Depends(get_session),
 ) -> ChatResponse:
     """Send one message to the agent and get its reply synchronously."""
-    slug = body.business_slug or settings.default_business_slug
+    started_at = time.monotonic()
+    slug = body.business_slug
     if not slug:
         raise NotFoundError(
-            "No business specified and DEFAULT_BUSINESS_SLUG is unset.",
-            details={"hint": "Pass business_slug in the request body."},
+            "business_slug is required.",
+            details={"hint": "Pass 'business_slug' in the request body, e.g. 'nivaso-gaming'."},
         )
 
     async with UnitOfWork(session):
@@ -141,9 +189,17 @@ async def chat(
         business = await businesses.get_active_or_raise(slug)
 
         customer_svc = CustomerService(session, business.id)
+        # Gate on verified identity, not on a body flag the caller controls.
+        # Authenticated admins (valid JWT or X-Internal-Key) get the __admin__
+        # prefix so their test conversations are excluded from the customer list.
+        # Real customers from channels never carry admin credentials.
+        is_admin = _caller_is_admin(authorization, x_internal_key)
+        effective_user_id = (
+            f"__admin__{body.user_id}" if is_admin else body.user_id
+        )
         customer, channel_row = await customer_svc.resolve_or_create(
             channel=Channel.WEB,
-            external_user_id=body.user_id,
+            external_user_id=effective_user_id,
             display_name=body.display_name,
         )
 
@@ -179,7 +235,24 @@ async def chat(
         customer=customer,
         conversation=conversation,
     )
-    runner = build_agent_runner(ctx, provider=body.provider, model=body.model)
+
+    # Load entitlements to enforce plan restrictions on AI tools/models.
+    # Use an isolated session so this read doesn't join the outer transaction.
+    from app.repositories.entitlements import EntitlementRepository
+    try:
+        from app.core.db import SessionFactory
+        async with SessionFactory() as ent_session:
+            ents = await EntitlementRepository(ent_session).resolved(business.id)
+    except Exception:
+        ents = None
+
+    runner = build_agent_runner(
+        ctx,
+        provider=body.provider,
+        model=body.model,
+        admin_mode=body.admin_mode,
+        entitlements=ents,
+    )
     reply = await runner.run(
         history=history,
         user_text=body.message,
@@ -194,11 +267,13 @@ async def chat(
         _trailing_tool_calls(after_history, inbound.id) if inbound is not None else []
     )
 
+    channel_latency_ms = int((time.monotonic() - started_at) * 1000)
     log.info(
         "web_chat_reply",
         business=slug,
         conversation_id=str(conversation.id),
         tools=[t.tool for t in tools_used],
+        channel_latency_ms=channel_latency_ms,
     )
 
     return ChatResponse(
@@ -209,6 +284,7 @@ async def chat(
         conversation_state=conversation.current_state,
         tools_used=tools_used,
         model_used=model_used,
+        channel_latency_ms=channel_latency_ms,
     )
 
 
@@ -219,7 +295,7 @@ async def get_history(
     session: AsyncSession = Depends(get_session),
 ) -> list[HistoryMessage]:
     """Return the TEXT messages for this user's active conversation."""
-    slug = business_slug or settings.default_business_slug
+    slug = business_slug
     if not slug:
         return []
 
@@ -261,7 +337,7 @@ async def list_sessions(
     session: AsyncSession = Depends(get_session),
 ) -> list[SessionOut]:
     """List all WEB chat sessions for a business, newest activity first."""
-    slug = business_slug or settings.default_business_slug
+    slug = business_slug
     if not slug:
         return []
 
@@ -301,3 +377,42 @@ async def list_sessions(
 
     results.sort(key=lambda s: s.last_message_at or "", reverse=True)
     return results
+
+
+class BusinessConfigOut(BaseModel):
+    slug: str
+    name: str
+    razorpay_enabled: bool
+    agent_tone: str
+    business_hours: dict | None
+
+
+@router.get("/config/{slug}", response_model=BusinessConfigOut)
+async def get_business_config(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+) -> BusinessConfigOut:
+    """Public endpoint — returns non-sensitive business config for the chat widget.
+
+    Customer-facing web chat widgets call this to discover which business
+    they're talking to and what features are enabled, without needing the
+    X-Internal-Key header.
+
+    Usage:
+        GET /web/config/nivaso-gaming
+        → { "slug": "nivaso-gaming", "name": "Nivaso Gaming Store",
+            "razorpay_enabled": true, "agent_tone": "friendly_casual", ... }
+    """
+    try:
+        business = await BusinessRepository(session).get_active_or_raise(slug)
+    except NotFoundError:
+        raise NotFoundError("Business not found.", details={"slug": slug})
+
+    s: dict = business.settings or {}
+    return BusinessConfigOut(
+        slug=business.slug,
+        name=business.name,
+        razorpay_enabled=bool(s.get("razorpay_enabled", True)),
+        agent_tone=str(s.get("agent_tone", "friendly_casual")),
+        business_hours=s.get("business_hours") or None,
+    )

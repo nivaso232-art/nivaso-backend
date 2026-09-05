@@ -249,7 +249,8 @@ Each `InboundMessage` contains:
 **Resolve the business**
 
 ```python
-BusinessRepository.get_active_or_raise(settings.default_business_slug)
+channel = await BusinessChannelRepository(session).get_by_external_id(...)
+BusinessRepository.get_active_or_raise(channel.business.slug)
 ```
 
 A suspended business stops here — its agent will not respond.
@@ -681,14 +682,12 @@ Admin API
 | `POST` | `/webhooks/telegram` | Inbound Telegram updates |
 | `POST` | `/webhooks/razorpay` | Razorpay payment events |
 
-### Admin Endpoints (Require `X-Internal-Key` header)
+### Admin Endpoints (Require a business-admin JWT or `X-Internal-Key` header)
 
-**Businesses**
+**Businesses** (scoped to the caller's own business — platform-wide business listing/creation lives under `/super-admin/businesses`, Nivaso-operator only)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/admin/businesses` | List all businesses |
-| `POST` | `/admin/businesses` | Create a business |
 | `GET` | `/admin/businesses/{slug}` | Get a business |
 | `PATCH` | `/admin/businesses/{slug}` | Update a business |
 
@@ -788,14 +787,20 @@ alembic upgrade head
 
 ### 4. Create your first business
 
+Business creation happens through the super-admin API, which also provisions
+that business's login credentials:
+
 ```bash
-curl -X POST http://localhost:8000/admin/businesses \
-  -H "X-Internal-Key: change-me" \
+curl -X POST http://localhost:8000/super-admin/businesses \
+  -H "X-Super-Admin-Key: <SUPER_ADMIN_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{"slug": "my-business", "name": "My Gaming Store"}'
 ```
 
-Set `DEFAULT_BUSINESS_SLUG=my-business` in your `.env`.
+The response includes a one-time `admin_username`/`admin_password` — save
+them, they can't be recovered. Use them to sign in at `POST /auth/login` and
+get a JWT scoped to `business_slug: "my-business"` for all subsequent
+`/admin/my-business/*` calls.
 
 ### 5. Add products
 
@@ -840,7 +845,11 @@ Interactive API docs available at `http://localhost:8000/docs` (local env only).
 |----------|----------|-------------|
 | `APP_ENV` | No | `local` / `staging` / `production` (default: `local`) |
 | `LOG_LEVEL` | No | `INFO` / `DEBUG` / `WARNING` (default: `INFO`) |
-| `INTERNAL_API_KEY` | Yes | Secret for `X-Internal-Key` header on admin routes |
+| `INTERNAL_API_KEY` | Yes outside local | Secret for `X-Internal-Key` header on admin routes |
+| `SUPER_ADMIN_API_KEY` | Yes outside local | Secret for `X-Super-Admin-Key` header on super-admin routes |
+| `JWT_SECRET` | Yes outside local | Signing secret for login JWTs |
+| `SUPER_ADMIN_USERNAME` | Yes outside local | Username for the shared super-admin portal login |
+| `SUPER_ADMIN_PASSWORD` | Yes outside local | Password for the shared super-admin portal login |
 | `DATABASE_URL` | Yes | Async Postgres URL for the app (Supavisor pooler, port 6543) |
 | `DATABASE_DIRECT_URL` | Yes | Direct Postgres URL for Alembic migrations (port 5432) |
 | `DB_ECHO` | No | `true` to log all SQL queries |
@@ -866,7 +875,6 @@ Interactive API docs available at `http://localhost:8000/docs` (local env only).
 | `RAZORPAY_KEY_ID` | Yes* | Razorpay API key ID |
 | `RAZORPAY_KEY_SECRET` | Yes* | Razorpay API key secret |
 | `RAZORPAY_WEBHOOK_SECRET` | Yes* | Used to verify `X-Razorpay-Signature` |
-| `DEFAULT_BUSINESS_SLUG` | Yes | Slug of the business inbound webhooks route to |
 
 *Required only if using that channel/provider.
 †Required only for the selected `LLM_PROVIDER` (one of `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`).

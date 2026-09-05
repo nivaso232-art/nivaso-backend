@@ -9,10 +9,18 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AgentEffort = Literal["low", "medium", "high", "xhigh", "max"]
+
+_SECURITY_FIELDS = (
+    "internal_api_key",
+    "super_admin_api_key",
+    "jwt_secret",
+    "super_admin_username",
+    "super_admin_password",
+)
 
 
 class Settings(BaseSettings):
@@ -26,7 +34,18 @@ class Settings(BaseSettings):
     # -- Application ------------------------------------------------------
     app_env: Literal["local", "staging", "production"] = "local"
     log_level: str = "INFO"
-    internal_api_key: str = "change-me"
+    # No default outside local — see `_require_secrets_outside_local` below.
+    internal_api_key: str = ""
+    # Separate key for super-admin routes — Nivaso operators only.
+    super_admin_api_key: str = ""
+
+    # -- JWT (portal login) -----------------------------------------------
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expire_hours: int = 24
+    # Super-admin portal login credentials (separate from the API key).
+    super_admin_username: str = ""
+    super_admin_password: str = ""
 
     # -- Database ---------------------------------------------------------
     # Pooler (port 6543) for the app; direct (port 5432) for Alembic DDL.
@@ -55,12 +74,16 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
 
+    # -- Groq (fast inference, OpenAI-compatible) -------------------------
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+
     # -- Credential vault -------------------------------------------------
     # Fernet key used to encrypt game-account secrets at rest. Generate with
     # Fernet.generate_key(). Without it, credential delivery cannot run.
     credential_enc_key: str = ""
     agent_effort: AgentEffort = "low"
-    agent_max_tokens: int = 512   # chat replies: 50-150 tok; tool calls: 20-80 tok
+    agent_max_tokens: int = 1024  # 512 was truncating tool-call reasoning mid-stream
     agent_max_iterations: int = 5  # purchase flow rarely needs more than 4 tool hops
 
     # -- WhatsApp ---------------------------------------------------------
@@ -79,6 +102,12 @@ class Settings(BaseSettings):
     razorpay_key_secret: str = ""
     razorpay_webhook_secret: str = ""
 
+    # -- CORS -----------------------------------------------------------------
+    # Comma-separated list of allowed frontend origins for non-local envs.
+    # Example: CORS_ORIGINS=https://app.vercel.app,https://www.yourdomain.com
+    # In local dev this is ignored — localhost ports are always allowed.
+    cors_origins: str = ""
+
     # -- Mock payments ----------------------------------------------------
     # When true, the agent issues a mock payment link (no Razorpay call), and
     # opening that link completes the payment and triggers real delivery. Use
@@ -86,13 +115,6 @@ class Settings(BaseSettings):
     payments_mock: bool = False
     # Base URL the mock link points at (must be reachable by whoever opens it).
     public_base_url: str = "http://localhost:8000"
-
-    # -- Multi-tenant routing --------------------------------------------
-    # For single-business deployments: the slug of the business that all
-    # inbound webhook messages are routed to. Multi-tenant routing (mapping
-    # phone-number-id or bot-token to a business slug) can be layered on top
-    # when needed.
-    default_business_slug: str = ""
 
     @field_validator("database_url", "database_direct_url")
     @classmethod
@@ -114,8 +136,51 @@ class Settings(BaseSettings):
         return self.app_env == "local"
 
     @property
+    def allowed_origins(self) -> list[str]:
+        """CORS origins the API will accept requests from."""
+        if self.is_local:
+            return [
+                "http://localhost:5173",
+                "http://localhost:5174",
+                "http://localhost:5175",
+                "http://localhost:3000",
+            ]
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
     def whatsapp_graph_base_url(self) -> str:
         return f"https://graph.facebook.com/{self.whatsapp_graph_api_version}"
+
+    @model_validator(mode="after")
+    def _require_secrets_outside_local(self) -> "Settings":
+        """Refuse to run staging/production on blank/placeholder secrets.
+
+        Local dev gets obviously-fake fallbacks so `uvicorn --reload` works
+        with no `.env` changes; everywhere else, a missing value is a
+        misconfiguration that must fail loudly at startup, not silently grant
+        super-admin/forge-a-JWT access to anyone who reads this repo.
+        """
+        if self.is_local:
+            local_fallbacks = {
+                "internal_api_key": "local-internal-key",
+                "super_admin_api_key": "local-super-admin-key",
+                "jwt_secret": "local-dev-jwt-secret-not-for-prod",
+                "super_admin_username": "superadmin",
+                "super_admin_password": "local-dev-super-admin-password",
+            }
+            for field, fallback in local_fallbacks.items():
+                if not getattr(self, field):
+                    setattr(self, field, fallback)
+            return self
+
+        missing = [f for f in _SECURITY_FIELDS if not getattr(self, f)]
+        if missing:
+            names = ", ".join(v.upper() for v in missing)
+            raise ValueError(
+                f"Missing required env var(s) outside local: {names}. "
+                "See .env.example for how to generate secure values."
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

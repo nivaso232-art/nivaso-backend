@@ -6,7 +6,8 @@ network call instead of six.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -21,17 +22,68 @@ from app.models.customer import Customer, CustomerChannel
 from app.models.enums import (
     Channel,
     ConversationStatus,
+    FulfillmentStatus,
     KnowledgeStatus,
+    PaymentStatus,
     ProductStatus,
     TicketStatus,
 )
+from app.models.fulfillment import Fulfillment
 from app.models.knowledge import Knowledge
+from app.models.payment import Payment
 from app.models.product import Product
 from app.models.support_ticket import SupportTicket
 
 router = APIRouter(tags=["admin:metrics"])
 
 _OPEN_STATUSES = {TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_CUSTOMER}
+
+
+def _bucket_by_week(daily: list[tuple[date, Decimal]], weeks: int = 8) -> list[dict[str, Any]]:
+    """Bucket daily amounts into the last N Monday-starting weeks."""
+    today = datetime.now(timezone.utc).date()
+    this_week_start = today - timedelta(days=today.weekday())
+    starts = [this_week_start - timedelta(weeks=i) for i in range(weeks - 1, -1, -1)]
+    sums = {s: Decimal("0") for s in starts}
+    for day, amount in daily:
+        week_start = day - timedelta(days=day.weekday())
+        if week_start in sums:
+            sums[week_start] += amount
+    return [{"label": f"Wk of {s.strftime('%b %d')}", "amount": float(sums[s])} for s in starts]
+
+
+def _bucket_by_month(daily: list[tuple[date, Decimal]], months: int = 12) -> list[dict[str, Any]]:
+    """Bucket daily amounts into the last N calendar months."""
+    today = datetime.now(timezone.utc).date()
+    keys: list[tuple[int, int]] = []
+    y, m = today.year, today.month
+    for i in range(months - 1, -1, -1):
+        mm = m - i
+        yy = y
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        keys.append((yy, mm))
+    sums = {k: Decimal("0") for k in keys}
+    for day, amount in daily:
+        key = (day.year, day.month)
+        if key in sums:
+            sums[key] += amount
+    return [
+        {"label": date(yy, mm, 1).strftime("%b %Y"), "amount": float(sums[(yy, mm)])}
+        for yy, mm in keys
+    ]
+
+
+def _bucket_by_year(daily: list[tuple[date, Decimal]], years: int = 5) -> list[dict[str, Any]]:
+    """Bucket daily amounts into the last N calendar years."""
+    today = datetime.now(timezone.utc).date()
+    keys = [today.year - i for i in range(years - 1, -1, -1)]
+    sums = {k: Decimal("0") for k in keys}
+    for day, amount in daily:
+        if day.year in sums:
+            sums[day.year] += amount
+    return [{"label": str(k), "amount": float(sums[k])} for k in keys]
 
 
 def _estimate_cost(input_tok: int, output_tok: int, cache_read: int, cache_creation: int) -> float:
@@ -176,6 +228,31 @@ async def get_metrics(
         )
     ) or 0
 
+    # ── Products delivered (all-time) ────────────────────────────────────────
+    products_delivered: int = await session.scalar(
+        select(func.count()).where(
+            Fulfillment.business_id == biz_id,
+            Fulfillment.status == FulfillmentStatus.DELIVERED,
+        )
+    ) or 0
+
+    # ── Revenue (successful payments, bucketed for the week/month/year toggle) ─
+    revenue_day_col = cast(Payment.created_at, Date)
+    revenue_rows = (
+        await session.execute(
+            select(
+                revenue_day_col.label("day"),
+                func.coalesce(func.sum(Payment.amount), 0).label("amount"),
+            )
+            .where(
+                Payment.business_id == biz_id,
+                Payment.status == PaymentStatus.SUCCESS,
+            )
+            .group_by(revenue_day_col)
+        )
+    ).all()
+    revenue_daily = [(r.day, Decimal(r.amount)) for r in revenue_rows]
+
     return {
         "tickets": {
             "by_status": tickets_by_status,
@@ -212,5 +289,12 @@ async def get_metrics(
         "sessions": {
             "active": active_sessions,
             "total": total_sessions,
+        },
+        "products_delivered": products_delivered,
+        "revenue": {
+            "currency": "INR",
+            "by_week": _bucket_by_week(revenue_daily),
+            "by_month": _bucket_by_month(revenue_daily),
+            "by_year": _bucket_by_year(revenue_daily),
         },
     }

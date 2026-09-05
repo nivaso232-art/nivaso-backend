@@ -90,6 +90,24 @@ class AgentError(AppError):
     code = "agent_error"
 
 
+class ForbiddenError(AppError):
+    """The caller is authenticated but does not have this feature on their plan."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "forbidden"
+
+
+class ProviderRateLimitError(AgentError):
+    """LLM provider is rate-limited or temporarily overloaded.
+
+    Raised before the generic AgentError wrapper so FallbackAgentRunner can
+    detect it via ``exc.__cause__`` and retry on the fallback model.
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "provider_rate_limit"
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:
@@ -100,7 +118,16 @@ def register_exception_handlers(app: FastAPI) -> None:
             path=request.url.path,
             details=exc.details,
         )
-        return JSONResponse(status_code=exc.status_code, content={"error": exc.to_dict()})
+        # RFC 6750: 401 responses on protected routes must include WWW-Authenticate.
+        # Exclude SignatureError (webhook HMAC failures) — those are not Bearer challenges.
+        extra: dict[str, str] = {}
+        if isinstance(exc, AuthError) and not isinstance(exc, SignatureError):
+            extra["WWW-Authenticate"] = "Bearer"
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": exc.to_dict()},
+            headers=extra or None,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(

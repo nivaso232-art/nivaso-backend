@@ -37,6 +37,7 @@ from google.genai import types
 from app.agent.context import ToolContext
 from app.agent.prompts import build_cached_system, build_turn_context
 from app.agent.registry import TOOLS, TOOLS_BY_NAME
+from app.agent.tools.base import ToolSpec
 from app.core.config import settings
 from app.core.errors import AgentError
 from app.core.uow import UnitOfWork
@@ -214,9 +215,26 @@ def _history_to_contents(messages: Sequence[Message]) -> list[types.Content]:
 class GeminiAgentRunner:
     """Drives a single agent turn on Gemini: call the model, execute tools, reply."""
 
-    def __init__(self, ctx: ToolContext, *, model: str | None = None) -> None:
+    def __init__(
+        self,
+        ctx: ToolContext,
+        *,
+        model: str | None = None,
+        extra_tools: Sequence[ToolSpec] = (),
+        allowed_tool_names: frozenset[str] | None = None,
+        max_iterations_override: int | None = None,
+    ) -> None:
         self.ctx = ctx
         self.model = model or settings.gemini_model
+        self.extra_tools = extra_tools
+        self.admin_mode = bool(extra_tools)
+        self.allowed_tool_names = allowed_tool_names
+        self.max_iterations_override = max_iterations_override
+        # Restrict base registry to allowed tools when entitlements are enforced.
+        base_registry = TOOLS_BY_NAME
+        if allowed_tool_names is not None:
+            base_registry = {k: v for k, v in TOOLS_BY_NAME.items() if k in allowed_tool_names}
+        self._tools_by_name = {**base_registry, **{t.name: t for t in extra_tools}}
 
     async def run(
         self,
@@ -233,18 +251,33 @@ class GeminiAgentRunner:
         # real error.
         conversation_id_str = str(self.ctx.conversation_id)
 
+        # Load AI Playbook rules.
+        from app.repositories.business_rules import BusinessRuleRepository
+        from app.repositories.entitlements import EntitlementRepository
+        try:
+            ent_row = await EntitlementRepository(self.ctx.session).get(self.ctx.business_id)
+            _plan = ent_row.plan if ent_row else None
+            _ents = await EntitlementRepository(self.ctx.session).resolved(self.ctx.business_id)
+            _rules = await BusinessRuleRepository(self.ctx.session).get_for_business(
+                self.ctx.business_id, plan=_plan, entitlements=_ents
+            )
+        except Exception:
+            _rules = []
+
         # build_cached_system returns Anthropic-style text blocks; Gemini takes a
         # plain system_instruction string, so pull the text back out.
         system_blocks = build_cached_system(
             self.ctx.business,
             categories=categories,
             knowledge_titles=knowledge_titles,
+            rules=_rules,
         )
         system_text = system_blocks[0]["text"]
 
         turn_ctx = build_turn_context(
             customer=self.ctx.customer,
             conversation=self.ctx.conversation,
+            admin_mode=self.admin_mode,
         )
 
         contents = _history_to_contents(history)
@@ -257,9 +290,21 @@ class GeminiAgentRunner:
             )
         )
 
+        base_decls = _function_declarations()
+        if self.allowed_tool_names is not None:
+            base_decls = [d for d in base_decls if d.name in self.allowed_tool_names]
         config = types.GenerateContentConfig(
             system_instruction=system_text,
-            tools=[types.Tool(function_declarations=_function_declarations())],
+            tools=[types.Tool(
+                function_declarations=base_decls + [
+                    types.FunctionDeclaration(
+                        name=t.name,
+                        description=t.description,
+                        parameters=_to_gemini_schema(t.input_schema),
+                    )
+                    for t in self.extra_tools
+                ]
+            )],
             # We run tools ourselves (to log them and inject ToolContext), so keep
             # the SDK from trying to auto-execute anything.
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
@@ -278,7 +323,7 @@ class GeminiAgentRunner:
 
         try:
             async with UnitOfWork(self.ctx.session):
-                while iterations < settings.agent_max_iterations:
+                while iterations < (self.max_iterations_override or settings.agent_max_iterations):
                     iterations += 1
 
                     response = await _client.aio.models.generate_content(
@@ -357,7 +402,7 @@ class GeminiAgentRunner:
 
                         is_error = False
                         result: Any
-                        spec = TOOLS_BY_NAME.get(tool_name)
+                        spec = self._tools_by_name.get(tool_name)
                         if spec is None:
                             is_error = True
                             result = f"Unknown tool: {tool_name}"
@@ -399,7 +444,7 @@ class GeminiAgentRunner:
                 latency_ms = int((time.monotonic() - started_at) * 1000)
                 run = AgentRun(
                     conversation_id=self.ctx.conversation_id,
-                    model=settings.gemini_model,
+                    model=self.model,
                     effort=settings.agent_effort,
                     input_tokens=total_input,
                     output_tokens=total_output,

@@ -12,7 +12,7 @@ import uuid
 from typing import Any
 
 from app.agent.context import ToolContext
-from app.agent.tools.base import ToolSpec, schema, string_prop
+from app.agent.tools.base import ToolSpec, integer_prop, schema, string_prop
 from app.core.errors import ValidationError
 from app.core.ids import normalize_reference
 from app.models.enums import ConversationState
@@ -127,6 +127,46 @@ async def cancel_order(
         **_serialize(cancelled),
         "message": f"Order {cancelled.reference} has been cancelled.",
     }
+
+
+async def list_my_orders(
+    ctx: ToolContext, limit: int | None = None
+) -> dict[str, Any]:
+    """Return the current customer's order history, newest first."""
+    from app.repositories.orders import OrderRepository
+
+    cap = min(limit or 10, 20) if limit else 10
+    repo = OrderRepository(ctx.session, ctx.business_id)
+    orders = await repo.list_for_customer(ctx.customer_id, limit=cap)
+
+    if not orders:
+        return {"count": 0, "orders": [], "note": "No orders found for your account."}
+
+    return {
+        "count": len(orders),
+        "orders": [_serialize(o) for o in orders],
+    }
+
+
+LIST_MY_ORDERS = ToolSpec(
+    name="list_my_orders",
+    description=(
+        "Return the customer's full order history (newest first), including status, "
+        "items, and totals. Use this when the customer asks 'show me all my orders', "
+        "'what have I bought', or 'which order was X' without a specific reference."
+    ),
+    input_schema=schema(
+        properties={
+            "limit": integer_prop(
+                "Maximum orders to return (1–20). Defaults to 10.",
+                minimum=1,
+                maximum=20,
+                nullable=True,
+            ),
+        }
+    ),
+    handler=list_my_orders,
+)
 
 
 CREATE_ORDER = ToolSpec(

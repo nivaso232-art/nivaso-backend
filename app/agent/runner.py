@@ -34,6 +34,7 @@ import structlog
 from app.agent.context import ToolContext
 from app.agent.prompts import build_cached_system, build_turn_context
 from app.agent.registry import TOOLS_BY_NAME, api_tools
+from app.agent.tools.base import ToolSpec
 from app.core.config import settings
 from app.core.errors import AgentError
 from app.core.uow import UnitOfWork
@@ -187,9 +188,27 @@ def _history_to_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
 class AgentRunner:
     """Drives a single agent turn: call the LLM, execute tools, return the reply."""
 
-    def __init__(self, ctx: ToolContext, *, model: str | None = None) -> None:
+    def __init__(
+        self,
+        ctx: ToolContext,
+        *,
+        model: str | None = None,
+        extra_tools: Sequence[ToolSpec] = (),
+        allowed_tool_names: frozenset[str] | None = None,
+        max_iterations_override: int | None = None,
+    ) -> None:
         self.ctx = ctx
         self.model = model or settings.agent_model
+        self.extra_tools = extra_tools
+        self.admin_mode = bool(extra_tools)
+        self.allowed_tool_names = allowed_tool_names
+        self.max_iterations_override = max_iterations_override
+        # Merge base tools with any caller-supplied extras (e.g. admin tools),
+        # restricting to the allowed set when entitlements are enforced.
+        base_registry = TOOLS_BY_NAME
+        if allowed_tool_names is not None:
+            base_registry = {k: v for k, v in TOOLS_BY_NAME.items() if k in allowed_tool_names}
+        self._tools_by_name = {**base_registry, **{t.name: t for t in extra_tools}}
 
     async def run(
         self,
@@ -214,15 +233,30 @@ class AgentRunner:
         # lazy reload (MissingGreenlet) that masks the real error.
         conversation_id_str = str(self.ctx.conversation_id)
 
+        # Load AI Playbook rules for this business (global + plan + business-specific).
+        from app.repositories.business_rules import BusinessRuleRepository
+        from app.repositories.entitlements import EntitlementRepository
+        try:
+            ent_row = await EntitlementRepository(self.ctx.session).get(self.ctx.business_id)
+            _plan = ent_row.plan if ent_row else None
+            _ents = await EntitlementRepository(self.ctx.session).resolved(self.ctx.business_id)
+            _rules = await BusinessRuleRepository(self.ctx.session).get_for_business(
+                self.ctx.business_id, plan=_plan, entitlements=_ents
+            )
+        except Exception:
+            _rules = []
+
         system = build_cached_system(
             self.ctx.business,
             categories=categories,
             knowledge_titles=knowledge_titles,
+            rules=_rules,
         )
 
         turn_ctx = build_turn_context(
             customer=self.ctx.customer,
             conversation=self.ctx.conversation,
+            admin_mode=self.admin_mode,
         )
 
         # Volatile turn context is injected as the first user/assistant exchange
@@ -258,14 +292,22 @@ class AgentRunner:
 
         try:
             async with UnitOfWork(self.ctx.session):
-                while iterations < settings.agent_max_iterations:
+                while iterations < (self.max_iterations_override or settings.agent_max_iterations):
                     iterations += 1
 
+                    base_tools = api_tools()
+                    if self.allowed_tool_names is not None:
+                        base_tools = [t for t in base_tools if t["name"] in self.allowed_tool_names]
+                    # Admin tools (extra_tools) are rendered as strict=False so they
+                    # don't count toward Anthropic's 20-strict-tool limit. Customer-
+                    # facing base tools stay strict for schema safety.
+                    extra_api = [{**t.to_api_tool(), "strict": False} for t in self.extra_tools]
+                    all_tools = base_tools + extra_api
                     response = await _client.messages.create(
                         model=self.model,
                         max_tokens=settings.agent_max_tokens,
                         system=system,
-                        tools=api_tools(),
+                        tools=all_tools,
                         messages=api_messages,
                         thinking=thinking_param,
                     )
@@ -328,7 +370,7 @@ class AgentRunner:
 
                         is_error = False
                         result: Any = None
-                        spec = TOOLS_BY_NAME.get(tool_name)
+                        spec = self._tools_by_name.get(tool_name)
                         if spec is None:
                             is_error = True
                             result = f"Unknown tool: {tool_name}"

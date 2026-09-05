@@ -41,28 +41,58 @@ class ProductRepository(BaseRepository[Product]):
         limit: int = 10,
         include_unavailable: bool = False,
     ) -> Sequence[Product]:
-        """Full-text search with a trigram fallback.
+        """Full-text search with a trigram fallback, plus category-drop retry.
 
-        Two passes, in order:
-
-        1. ``websearch_to_tsquery`` against the generated ``search_doc``. This
-           handles multi-word queries and quoted phrases, and - unlike
-           ``to_tsquery`` - never raises on punctuation a customer typed.
-        2. If that returns nothing, trigram similarity on ``name``. This is the
-           typo path: "gta v" or "gt a5" still finds "GTA 5".
-
-        Fallback rather than union because a real FTS hit is always better than
-        a fuzzy one; mixing them lets a high-similarity irrelevant name outrank
-        an exact keyword match.
+        Pass order:
+        1. FTS with category filter (exact match).
+        2. FTS without category — the agent sometimes passes genre names
+           (e.g. "RPG", "Action-RPG") that differ from our product category
+           values (e.g. "Game"). Dropping the filter recovers those cases.
+        3. Trigram similarity with category.
+        4. Trigram similarity without category — last resort for typos + wrong
+           category together.
         """
         cleaned = query.strip()
         if not cleaned:
             return []
 
-        # Cast the config to regconfig: SQLAlchemy would otherwise bind "english"
-        # as text, and Postgres has no websearch_to_tsquery(text, text) overload.
         tsquery = func.websearch_to_tsquery(cast(literal("english"), REGCONFIG), cleaned)
 
+        results = await self._search_fts(
+            tsquery, category=category, limit=limit, include_unavailable=include_unavailable
+        )
+        if results:
+            return results
+
+        # Category may have been a genre guess — retry without it.
+        if category:
+            results = await self._search_fts(
+                tsquery, category=None, limit=limit, include_unavailable=include_unavailable
+            )
+            if results:
+                return results
+
+        results = await self._search_fuzzy(
+            cleaned, category=category, limit=limit, include_unavailable=include_unavailable
+        )
+        if results:
+            return results
+
+        if category:
+            results = await self._search_fuzzy(
+                cleaned, category=None, limit=limit, include_unavailable=include_unavailable
+            )
+
+        return results
+
+    async def _search_fts(
+        self,
+        tsquery: object,
+        *,
+        category: str | None,
+        limit: int,
+        include_unavailable: bool,
+    ) -> Sequence[Product]:
         stmt = (
             self._scoped()
             .where(Product.search_doc.op("@@")(tsquery))
@@ -73,17 +103,7 @@ class ProductRepository(BaseRepository[Product]):
             stmt = stmt.where(Product.status == ProductStatus.ACTIVE)
         if category:
             stmt = stmt.where(Product.category == category)
-
-        results = (await self.session.execute(stmt)).scalars().all()
-        if results:
-            return results
-
-        return await self._search_fuzzy(
-            cleaned,
-            category=category,
-            limit=limit,
-            include_unavailable=include_unavailable,
-        )
+        return (await self.session.execute(stmt)).scalars().all()
 
     async def _search_fuzzy(
         self,
