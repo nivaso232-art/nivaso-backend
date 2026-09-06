@@ -44,6 +44,33 @@ def _is_retryable(exc: BaseException | None) -> bool:
     except ImportError:
         pass
 
+    # google-genai SDK (Gemini via AI Studio) — the provider this app actually
+    # uses. It raises google.genai.errors.{ServerError,ClientError}, NOT the
+    # legacy google.api_core exceptions, so overload/quota errors surface here.
+    #   503 UNAVAILABLE  -> ServerError  ("high demand", transient)
+    #   500/502/504      -> ServerError  (transient backend hiccups)
+    #   429 RESOURCE_EXHAUSTED -> ClientError (rate limit / quota)
+    try:
+        from google.genai import errors as genai_errors
+        if isinstance(exc, genai_errors.APIError):
+            code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+            if code in (429, 500, 502, 503, 504):
+                return True
+    except ImportError:
+        pass
+
+    # Groq SDK (OpenAI-compatible) — matters when Groq is a *primary* with a
+    # different fallback. 429 rate-limit and 5xx overloads are transient.
+    try:
+        import groq
+        if isinstance(exc, (groq.RateLimitError, groq.InternalServerError)):
+            return True
+        if isinstance(exc, groq.APIStatusError):
+            return getattr(exc, "status_code", 0) in (429, 500, 502, 503, 504)
+    except ImportError:
+        pass
+
+    # Legacy google.api_core (Vertex path) — kept as a harmless fallback.
     try:
         from google.api_core import exceptions as gexc
         if isinstance(exc, gexc.ResourceExhausted):
