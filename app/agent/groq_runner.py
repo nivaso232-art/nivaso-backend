@@ -193,16 +193,22 @@ class GroqAgentRunner:
         started_at = time.monotonic()
         conversation_id_str = str(self.ctx.conversation_id)
 
-        # Load AI Playbook rules.
+        # Load AI Playbook rules on a SEPARATE session. Reading on ctx.session
+        # here autobegins a transaction; the UnitOfWork opened below would then
+        # see an in-progress transaction and degrade to a non-committing
+        # passthrough (see uow.py + db.py:get_db), silently discarding every
+        # write this turn makes — reply, tool calls, order, payment, agent_run.
+        from app.core.db import SessionFactory
         from app.repositories.business_rules import BusinessRuleRepository
         from app.repositories.entitlements import EntitlementRepository
         try:
-            ent_row = await EntitlementRepository(self.ctx.session).get(self.ctx.business_id)
-            _plan = ent_row.plan if ent_row else None
-            _ents = await EntitlementRepository(self.ctx.session).resolved(self.ctx.business_id)
-            _rules = await BusinessRuleRepository(self.ctx.session).get_for_business(
-                self.ctx.business_id, plan=_plan, entitlements=_ents
-            )
+            async with SessionFactory() as _rules_session:
+                ent_row = await EntitlementRepository(_rules_session).get(self.ctx.business_id)
+                _plan = ent_row.plan if ent_row else None
+                _ents = await EntitlementRepository(_rules_session).resolved(self.ctx.business_id)
+                _rules = await BusinessRuleRepository(_rules_session).get_for_business(
+                    self.ctx.business_id, plan=_plan, entitlements=_ents
+                )
         except Exception:
             _rules = []
 
