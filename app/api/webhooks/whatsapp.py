@@ -271,6 +271,91 @@ async def _handle_message(session: AsyncSession, msg: InboundMessage) -> uuid.UU
     except Exception:
         ents = None
 
+    # Check if connector automation is active for WhatsApp. When AI_ENABLED is
+    # False the automation flow completely replaces the agent; when True the
+    # automation takes priority but the AI is still the fallback if no active
+    # flow is configured.
+    from app.channels.automation.executor import AutomationExecutor
+    from app.entitlements.flags import FeatureFlag
+
+    ai_enabled: bool = True
+    if ents:
+        ai_enabled = ents.get(FeatureFlag.AI_ENABLED, True)
+
+    automation_executor = AutomationExecutor(session)
+    automation_result = await automation_executor.handle(
+        session=session,
+        business=business,
+        customer=customer,
+        conversation=conversation,
+        connector_type="whatsapp",
+        user_message=msg.text or "",
+    )
+
+    if automation_result and automation_result.handled:
+        # Automation handled this turn — send the interactive reply and return.
+        try:
+            wa_client = WhatsAppClient(
+                phone_number_id=wa_credentials.get("phone_number_id") or None,
+                access_token=wa_credentials.get("access_token") or None,
+            )
+            if automation_result.options and automation_result.menu_type == "buttons":
+                # Convert options to button format
+                buttons = [
+                    {"id": opt["id"], "title": opt["label"]}
+                    for opt in automation_result.options
+                ]
+                wamid = await wa_client.send_interactive_buttons(
+                    to=msg.wa_id,
+                    body=automation_result.text,
+                    buttons=buttons,
+                )
+            elif automation_result.options and automation_result.menu_type == "list":
+                wamid = await wa_client.send_interactive_list(
+                    to=msg.wa_id,
+                    header="Options",
+                    body=automation_result.text,
+                    button_label="Choose",
+                    items=automation_result.options,
+                )
+            else:
+                wamid = await wa_client.send_text(to=msg.wa_id, text=automation_result.text)
+            channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+            log.info(
+                "whatsapp_automation_reply_sent",
+                to=msg.wa_id,
+                wamid=wamid,
+                channel_latency_ms=channel_latency_ms,
+            )
+        except ProviderError as exc:
+            channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+            log.error(
+                "whatsapp_send_failed",
+                to=msg.wa_id,
+                error=str(exc),
+                channel_latency_ms=channel_latency_ms,
+            )
+        finally:
+            clear_request_context()
+        return business.id
+
+    # If AI is disabled and there is no active automation, send a plain message.
+    if not ai_enabled:
+        try:
+            wa_client = WhatsAppClient(
+                phone_number_id=wa_credentials.get("phone_number_id") or None,
+                access_token=wa_credentials.get("access_token") or None,
+            )
+            await wa_client.send_text(
+                to=msg.wa_id,
+                text="Our automated assistant is not available right now. Please try again later.",
+            )
+        except ProviderError:
+            pass
+        finally:
+            clear_request_context()
+        return business.id
+
     # Run agent turn — the runner opens its own UnitOfWork to commit its writes.
     try:
         ctx = ToolContext(

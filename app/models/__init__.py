@@ -12,6 +12,7 @@ from app.models.business import Business
 from app.models.business_rule import BusinessRule
 from app.models.business_admin import BusinessAdmin
 from app.models.business_entitlement import BusinessEntitlement
+from app.models.connector_automation import ConnectorAutomation
 from app.models.conversation import Conversation, Message
 from app.models.credential import ProductCredential
 from app.models.customer import Customer, CustomerChannel
@@ -33,6 +34,7 @@ __all__ = [
     "BusinessAdmin",
     "BusinessRule",
     "BusinessEntitlement",
+    "ConnectorAutomation",
     "Conversation",
     "Customer",
     "CustomerChannel",

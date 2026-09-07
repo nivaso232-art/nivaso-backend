@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, mock_payments, web
 from app.api.admin import (
     agent_runs,
+    automations,
     businesses,
     channels,
     credentials,
@@ -130,6 +131,7 @@ app.include_router(fulfillments.router, prefix="/admin", dependencies=_admin_dep
 app.include_router(webhook_events.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(agent_runs.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(channels.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(automations.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(metrics.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(model_registry.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(dashboard.router, prefix="/admin", dependencies=_admin_deps)

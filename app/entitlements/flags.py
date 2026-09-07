@@ -35,6 +35,9 @@ class FeatureFlag:
     """Dotted-namespace constants for every controllable capability."""
 
     # ── AI ──────────────────────────────────────────────────────────────────
+    # Whether the AI agent is active at all. When False, only connector
+    # automations (button/menu flows) run; no LLM calls are made.
+    AI_ENABLED = "ai.enabled"
     # List of model IDs the business is allowed to use. None = unrestricted.
     AI_MODELS = "ai.models"
     # Whether the client-admin UI exposes the model-picker at all.
@@ -49,6 +52,12 @@ class FeatureFlag:
     CHANNEL_WHATSAPP = "channel.whatsapp"
     CHANNEL_TELEGRAM = "channel.telegram"
     CHANNEL_PAYMENTS = "channel.payments"
+
+    # ── Connector automations ────────────────────────────────────────────────
+    # Whether the business can configure button/menu automation flows.
+    CONNECTOR_WHATSAPP_AUTOMATION = "connector.whatsapp_automation"
+    CONNECTOR_TELEGRAM_AUTOMATION = "connector.telegram_automation"
+    CONNECTOR_WEB_AUTOMATION = "connector.web_automation"
 
     # ── Catalog & content limits ─────────────────────────────────────────────
     # None = unlimited.
@@ -153,6 +162,7 @@ TOOL_DEPENDENCIES: dict[str, str] = {
 
 PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
     "free": {
+        FeatureFlag.AI_ENABLED: True,
         FeatureFlag.AI_MODELS: ["claude-haiku-4-5-20251001"],
         FeatureFlag.AI_CUSTOM_MODEL_PICKER: False,
         FeatureFlag.AI_MAX_ITERATIONS: 3,
@@ -183,6 +193,9 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.CHANNEL_WHATSAPP: False,
         FeatureFlag.CHANNEL_TELEGRAM: False,
         FeatureFlag.CHANNEL_PAYMENTS: False,
+        FeatureFlag.CONNECTOR_WHATSAPP_AUTOMATION: False,
+        FeatureFlag.CONNECTOR_TELEGRAM_AUTOMATION: False,
+        FeatureFlag.CONNECTOR_WEB_AUTOMATION: False,
         FeatureFlag.PRODUCTS_LIMIT: 25,
         FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT: 5,
         FeatureFlag.ORDERS_ENABLED: False,
@@ -200,6 +213,7 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         ],
     },
     "starter": {
+        FeatureFlag.AI_ENABLED: True,
         FeatureFlag.AI_MODELS: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         FeatureFlag.AI_CUSTOM_MODEL_PICKER: False,
         FeatureFlag.AI_MAX_ITERATIONS: 5,
@@ -233,6 +247,9 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.CHANNEL_WHATSAPP: False,
         FeatureFlag.CHANNEL_TELEGRAM: False,
         FeatureFlag.CHANNEL_PAYMENTS: False,
+        FeatureFlag.CONNECTOR_WHATSAPP_AUTOMATION: False,
+        FeatureFlag.CONNECTOR_TELEGRAM_AUTOMATION: False,
+        FeatureFlag.CONNECTOR_WEB_AUTOMATION: False,
         FeatureFlag.PRODUCTS_LIMIT: 100,
         FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT: 20,
         FeatureFlag.ORDERS_ENABLED: True,
@@ -250,6 +267,7 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         ],
     },
     "pro": {
+        FeatureFlag.AI_ENABLED: True,
         FeatureFlag.AI_MODELS: [
             "claude-haiku-4-5-20251001",
             "claude-sonnet-4-6",
@@ -298,6 +316,9 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.CHANNEL_WHATSAPP: True,
         FeatureFlag.CHANNEL_TELEGRAM: True,
         FeatureFlag.CHANNEL_PAYMENTS: True,
+        FeatureFlag.CONNECTOR_WHATSAPP_AUTOMATION: True,
+        FeatureFlag.CONNECTOR_TELEGRAM_AUTOMATION: True,
+        FeatureFlag.CONNECTOR_WEB_AUTOMATION: True,
         FeatureFlag.PRODUCTS_LIMIT: 1000,
         FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT: 100,
         FeatureFlag.ORDERS_ENABLED: True,
@@ -320,6 +341,7 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         ],
     },
     "enterprise": {
+        FeatureFlag.AI_ENABLED: True,
         FeatureFlag.AI_MODELS: None,
         FeatureFlag.AI_CUSTOM_MODEL_PICKER: True,
         FeatureFlag.AI_MAX_ITERATIONS: None,
@@ -328,6 +350,9 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.CHANNEL_WHATSAPP: True,
         FeatureFlag.CHANNEL_TELEGRAM: True,
         FeatureFlag.CHANNEL_PAYMENTS: True,
+        FeatureFlag.CONNECTOR_WHATSAPP_AUTOMATION: True,
+        FeatureFlag.CONNECTOR_TELEGRAM_AUTOMATION: True,
+        FeatureFlag.CONNECTOR_WEB_AUTOMATION: True,
         FeatureFlag.PRODUCTS_LIMIT: None,
         FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT: None,
         FeatureFlag.ORDERS_ENABLED: True,

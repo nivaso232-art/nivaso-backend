@@ -230,6 +230,77 @@ async def _handle_message(
     except Exception:
         ents = None
 
+    # Check if connector automation is active for Telegram.
+    from app.channels.automation.executor import AutomationExecutor
+    from app.entitlements.flags import FeatureFlag
+
+    ai_enabled: bool = True
+    if ents:
+        ai_enabled = ents.get(FeatureFlag.AI_ENABLED, True)
+
+    automation_executor = AutomationExecutor(session)
+    automation_result = await automation_executor.handle(
+        session=session,
+        business=business,
+        customer=customer,
+        conversation=conversation,
+        connector_type="telegram",
+        user_message=msg.text or "",
+    )
+
+    if automation_result and automation_result.handled:
+        # Automation handled this turn — send the reply via Telegram keyboard or plain text.
+        try:
+            bot_token = (tg_credentials or {}).get("bot_token") or None
+            tg_client = TelegramClient(bot_token=bot_token)
+            if automation_result.options:
+                # Convert options to keyboard button format
+                keyboard_buttons = [
+                    {"id": opt["id"], "label": opt["label"]}
+                    for opt in automation_result.options
+                ]
+                await tg_client.send_with_keyboard(
+                    chat_id=msg.chat_id,
+                    text=automation_result.text,
+                    buttons=keyboard_buttons,
+                )
+            else:
+                await tg_client.send_message(
+                    chat_id=msg.chat_id, text=automation_result.text
+                )
+            channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+            log.info(
+                "telegram_automation_reply_sent",
+                chat_id=msg.chat_id,
+                channel_latency_ms=channel_latency_ms,
+            )
+        except ProviderError as exc:
+            channel_latency_ms = int((time.monotonic() - started_at) * 1000)
+            log.error(
+                "telegram_send_failed",
+                chat_id=msg.chat_id,
+                error=str(exc),
+                channel_latency_ms=channel_latency_ms,
+            )
+        finally:
+            clear_request_context()
+        return
+
+    # If AI is disabled and there is no active automation, send a plain message.
+    if not ai_enabled:
+        try:
+            bot_token = (tg_credentials or {}).get("bot_token") or None
+            tg_client = TelegramClient(bot_token=bot_token)
+            await tg_client.send_message(
+                chat_id=msg.chat_id,
+                text="Our automated assistant is not available right now. Please try again later.",
+            )
+        except ProviderError:
+            pass
+        finally:
+            clear_request_context()
+        return
+
     try:
         ctx = ToolContext(
             session=session,
