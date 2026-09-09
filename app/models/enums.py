@@ -35,6 +35,7 @@ class ProductStatus(StrEnum):
 class Channel(StrEnum):
     WHATSAPP = "whatsapp"
     TELEGRAM = "telegram"
+    INSTAGRAM = "instagram"
     WEB = "web"
 
 
@@ -155,6 +156,7 @@ class TicketPriority(StrEnum):
 class WebhookSource(StrEnum):
     WHATSAPP = "whatsapp"
     TELEGRAM = "telegram"
+    INSTAGRAM = "instagram"
     RAZORPAY = "razorpay"
 
 

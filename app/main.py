@@ -42,7 +42,7 @@ from app.api.super_admin import chat as super_chat
 from app.api.super_admin import feature_requests as super_feature_requests
 from app.api.super_admin import plans as super_plans
 from app.api.deps import require_internal_key, require_super_admin_key, require_admin_auth, require_super_admin_auth
-from app.api.webhooks import razorpay, telegram, whatsapp
+from app.api.webhooks import instagram, razorpay, telegram, whatsapp
 from app.core.config import settings
 from app.core.db import dispose_engine
 from app.core.errors import register_exception_handlers
@@ -108,6 +108,7 @@ if settings.is_local:
 # -- Webhook routes (public, use their own signature verification) ------------
 app.include_router(whatsapp.router)
 app.include_router(telegram.router)
+app.include_router(instagram.router)
 app.include_router(razorpay.router)
 
 # -- Mock payment page (public; self-guards on PAYMENTS_MOCK) -----------------

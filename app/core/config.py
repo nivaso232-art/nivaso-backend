@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     whatsapp_app_secret: str = ""
     whatsapp_graph_api_version: str = "v21.0"
 
+    # -- Instagram (Instagram API with Instagram Login) -------------------
+    # Uses graph.instagram.com, not graph.facebook.com. Per-business access
+    # tokens live in business_channels.credentials; these are optional global
+    # fallbacks / shared-app secrets.
+    instagram_verify_token: str = ""
+    instagram_app_secret: str = ""
+    instagram_graph_api_version: str = "v21.0"
+
     # -- Telegram ---------------------------------------------------------
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
@@ -150,6 +158,10 @@ class Settings(BaseSettings):
     @property
     def whatsapp_graph_base_url(self) -> str:
         return f"https://graph.facebook.com/{self.whatsapp_graph_api_version}"
+
+    @property
+    def instagram_graph_base_url(self) -> str:
+        return f"https://graph.instagram.com/{self.instagram_graph_api_version}"
 
     @model_validator(mode="after")
     def _require_secrets_outside_local(self) -> "Settings":
