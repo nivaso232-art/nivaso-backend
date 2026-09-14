@@ -101,17 +101,22 @@ async def add_www_authenticate_on_401(request: Request, call_next: Any) -> Respo
 
 
 # -- CORS --------------------------------------------------------------------
-# Production CORS is handled entirely by Vercel routing (vercel.json injects
-# Access-Control-Allow-Origin on every response, OPTIONS returns 204 at CDN
-# level). Middleware is only needed for local uvicorn development.
-if settings.is_local:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.allowed_origins,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-Internal-Key", "X-Super-Admin-Key"],
-    )
+# Always handled by this middleware, in every environment. It used to be
+# gated off in production in favor of a vercel.json header hack that
+# hardcoded a single Access-Control-Allow-Origin value — that broke the
+# moment there was more than one frontend origin (web + admin as separate
+# Vercel deployments). CORSMiddleware correctly reflects whichever request
+# Origin matches settings.allowed_origins (CORS_ORIGINS env var, comma-
+# separated — set it to every deployed frontend origin), including
+# per-request OPTIONS preflight handling, so an arbitrary number of
+# frontend origins works with no further changes here.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Internal-Key", "X-Super-Admin-Key"],
+)
 
 
 # -- Webhook routes (public, use their own signature verification) ------------
