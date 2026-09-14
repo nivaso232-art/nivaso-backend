@@ -96,6 +96,9 @@ DASHBOARD_WIDGET_CATALOG: dict[str, str] = {
     "stat.open_tickets":       "Open Tickets",
     "stat.products_delivered": "Products Delivered",
     "chart.revenue":           "Revenue",
+    # ── New defaults ──────────────────────────────────────────────────────────
+    "list.needs_attention":    "Needs Attention",
+    "gauge.plan_usage":        "Plan Usage",
     # ── Advanced ────────────────────────────────────────────────────────────
     "stat.active_sessions":    "Active Sessions",
     "stat.agent_runs_today":   "Agent Runs Today",
@@ -105,17 +108,27 @@ DASHBOARD_WIDGET_CATALOG: dict[str, str] = {
     "chart.product_catalog":   "Product Catalog Breakdown",
     "chart.token_usage":       "Token Usage (7-day)",
     "chart.ticket_priority":   "Open Ticket Priority",
+    # ── New gated widgets ─────────────────────────────────────────────────────
+    "stat.orders_today":            "Orders Today",
+    "donut.order_status":           "Order Status Breakdown",
+    "bar.top_products":             "Top Selling Products",
+    "funnel.sales":                 "Sales Funnel",
+    "stat.active_coupons":          "Active Coupons",
+    "stat.active_offers":           "Active Offers",
+    "stat.appointments_upcoming":   "Upcoming Appointments",
 }
 
-# The subset that used to be hardcoded/always-on. Kept as a frozenset so the
-# dashboard endpoint can detect pre-unification saved selections and migrate
-# them transparently without a data migration.
+# The subset that used to be hardcoded/always-on, plus the 2 new defaults.
+# Kept as a frozenset so the dashboard endpoint can detect pre-unification
+# saved selections and migrate them transparently without a data migration.
 DASHBOARD_BASIC_WIDGET_KEYS: frozenset[str] = frozenset({
     "stat.products",
     "stat.customers",
     "stat.open_tickets",
     "stat.products_delivered",
     "chart.revenue",
+    "list.needs_attention",
+    "gauge.plan_usage",
 })
 
 # Widget key → feature flag that must be truthy for the widget to appear.
@@ -128,6 +141,16 @@ WIDGET_DEPENDENCIES: dict[str, str] = {
     "chart.token_usage":       FeatureFlag.UI_AGENT_RUNS,
     "chart.ticket_status":     FeatureFlag.SUPPORT_TICKETS_ENABLED,
     "chart.ticket_priority":   FeatureFlag.SUPPORT_TICKETS_ENABLED,
+    # ── New dependencies ──────────────────────────────────────────────────────
+    "chart.product_catalog":      FeatureFlag.MODULE_PRODUCTS,
+    "chart.revenue":               FeatureFlag.CHANNEL_PAYMENTS,
+    "stat.orders_today":           FeatureFlag.ORDERS_ENABLED,
+    "donut.order_status":          FeatureFlag.ORDERS_ENABLED,
+    "bar.top_products":            FeatureFlag.ORDERS_ENABLED,
+    "funnel.sales":                FeatureFlag.ORDERS_ENABLED,
+    "stat.active_coupons":         FeatureFlag.MODULE_COUPONS,
+    "stat.active_offers":          FeatureFlag.MODULE_OFFERS,
+    "stat.appointments_upcoming":  FeatureFlag.MODULE_APPOINTMENTS,
 }
 
 # Tool name → feature flag that must be truthy for the tool to be injected.

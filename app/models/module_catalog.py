@@ -26,6 +26,7 @@ from app.models.base import Base, TimestampMixin, UUIDMixin, pg_enum
 class ModuleCatalogCategory(StrEnum):
     MODULE = "module"
     INTEGRATION = "integration"
+    WIDGET = "widget"
 
 
 class ModuleCatalogEntry(UUIDMixin, TimestampMixin, Base):

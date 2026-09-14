@@ -29,6 +29,7 @@ from app.api.admin import (
     custom_fields,
     customers,
     dashboard,
+    dashboard_widgets,
     fulfillments,
     knowledge,
     metrics,
@@ -145,6 +146,7 @@ app.include_router(channels.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(metrics.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(model_registry.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(dashboard.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(dashboard_widgets.router, prefix="/admin", dependencies=_admin_deps)
 
 # -- Super-admin routes (Nivaso operators only — separate key) ----------------
 _super_deps = [Depends(require_super_admin_auth)]

@@ -29,10 +29,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_business, get_session
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.uow import UnitOfWork
+from app.entitlements.dashboard_widgets import widget_allowed
 from app.entitlements.flags import (
     DASHBOARD_BASIC_WIDGET_KEYS,
     DASHBOARD_WIDGET_CATALOG,
-    WIDGET_DEPENDENCIES,
     FeatureFlag,
 )
 from app.models.business import Business
@@ -59,17 +59,14 @@ async def _resolved_flags(business_id: object) -> dict[str, object]:
         return {}
 
 
-def _dep_ok(flags: dict[str, object], key: str) -> bool:
-    """Return True if the widget's feature-flag dependency is satisfied."""
-    dep = WIDGET_DEPENDENCIES.get(key)
-    return dep is None or bool(flags.get(dep, False))
-
-
 def _build_allowed_set(flags: dict[str, object]) -> set[str]:
-    """Intersect plan-allowed widgets with dependency-satisfied widgets."""
-    allowed = flags.get(FeatureFlag.UI_DASHBOARD_WIDGETS)
-    plan_set = set(DASHBOARD_WIDGET_CATALOG) if allowed is None else set(allowed)
-    return {k for k in plan_set if _dep_ok(flags, k)}
+    """Every catalog widget this business currently has access to.
+
+    Source of truth is ``widget_allowed`` (default-basic OR own-flag, AND
+    dependency) — the old plan-list gate (``FeatureFlag.UI_DASHBOARD_WIDGETS``)
+    is no longer consulted here.
+    """
+    return {k for k in DASHBOARD_WIDGET_CATALOG if widget_allowed(k, flags)}
 
 
 @router.get("/{slug}/dashboard-config", response_model=DashboardConfigOut)
