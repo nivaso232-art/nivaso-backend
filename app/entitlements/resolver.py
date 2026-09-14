@@ -14,13 +14,19 @@ from typing import Any
 from app.entitlements.flags import PLAN_DEFAULTS, FeatureFlag
 
 
-def resolve(plan: str, overrides: dict[str, Any]) -> dict[str, Any]:
+def resolve(plan: str | None, overrides: dict[str, Any]) -> dict[str, Any]:
     """Merge plan defaults with per-business overrides.
 
-    Unknown plans fall back to ``free`` so a future plan rename never
-    accidentally grants enterprise access.
+    ``plan=None`` means no plan is assigned — the business has no baseline
+    at all, so every flag resolves to whatever ``overrides`` says (falsy/
+    absent for anything never explicitly granted). This is the default for
+    every new business: access is driven entirely by explicit per-module
+    grants (request approval or a direct admin toggle), not a plan tier.
+
+    Unknown non-None plans fall back to ``free`` so a future plan rename
+    never accidentally grants enterprise access.
     """
-    base = PLAN_DEFAULTS.get(plan, PLAN_DEFAULTS["free"]).copy()
+    base = {} if plan is None else PLAN_DEFAULTS.get(plan, PLAN_DEFAULTS["free"]).copy()
     base.update(overrides)
     return base
 

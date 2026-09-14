@@ -1,6 +1,7 @@
 """Authentication — JWT token issuance.
 
-Two login flows:
+Flows:
+  POST /auth/signup             — business self-signup (creates a PENDING business)
   POST /auth/login              — business admin (username = business slug)
   POST /auth/super-admin/login  — Nivaso super-admin
 """
@@ -8,16 +9,21 @@ Two login flows:
 from __future__ import annotations
 
 import bcrypt
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, status as http_status
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session
 from app.core.config import settings
-from app.core.errors import AuthError
+from app.core.errors import AuthError, ConflictError, ValidationError
 from app.core.jwt import create_token
+from app.core.uow import UnitOfWork
+from app.models.business import Business
+from app.models.enums import BusinessStatus
+from app.models.feature_request import FeatureRequest
 from app.repositories.business_admins import BusinessAdminRepository
 from app.repositories.businesses import BusinessRepository
+from app.repositories.module_catalog import ModuleCatalogRepository
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -38,6 +44,88 @@ class BusinessTokenOut(TokenOut):
     username: str
 
 
+class SignupIn(BaseModel):
+    slug: str
+    business_name: str
+    timezone: str = "Asia/Kolkata"
+    admin_username: str
+    admin_password: str
+    requested_modules: list[str] = []
+
+    @field_validator("admin_password")
+    @classmethod
+    def _password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("admin_password must be at least 8 characters long.")
+        return v
+
+
+class SignupOut(BaseModel):
+    business_slug: str
+    business_name: str
+    status: str
+    requested_modules: list[str]
+
+
+@router.post("/signup", response_model=SignupOut, status_code=http_status.HTTP_201_CREATED)
+async def business_signup(
+    body: SignupIn,
+    session: AsyncSession = Depends(get_session),
+) -> SignupOut:
+    """Self-service business signup. Creates a PENDING business — no login until
+    a super-admin approves it via PATCH /super-admin/businesses/{slug}/approve.
+    No JWT is issued here.
+    """
+    deduped_modules = list(dict.fromkeys(body.requested_modules))
+
+    valid_keys = await ModuleCatalogRepository(session).get_active_keys()
+    invalid = [k for k in deduped_modules if k not in valid_keys]
+    if invalid:
+        raise ValidationError(
+            f"Unknown requestable module(s): {sorted(invalid)}.",
+            details={"invalid_keys": sorted(invalid)},
+        )
+
+    biz_repo = BusinessRepository(session)
+
+    existing = await biz_repo.get_by_slug(body.slug)
+    if existing is not None:
+        raise ConflictError(f"A business with slug '{body.slug}' already exists.")
+
+    biz = Business(
+        slug=body.slug,
+        name=body.business_name,
+        timezone=body.timezone,
+        status=BusinessStatus.PENDING,
+        settings={},
+    )
+    password_hash = bcrypt.hashpw(body.admin_password.encode(), bcrypt.gensalt()).decode()
+
+    async with UnitOfWork(session):
+        await biz_repo.add(biz)
+        admin_repo = BusinessAdminRepository(session)
+        await admin_repo.create(
+            business_id=biz.id,
+            username=body.admin_username,
+            password_hash=password_hash,
+        )
+        for module_key in deduped_modules:
+            session.add(
+                FeatureRequest(
+                    business_id=biz.id,
+                    feature=module_key,
+                    reason="Requested at signup",
+                )
+            )
+
+    return SignupOut(
+        business_slug=biz.slug,
+        business_name=biz.name,
+        status=biz.status.value,
+        requested_modules=deduped_modules,
+    )
+
+
 @router.post("/login", response_model=BusinessTokenOut)
 async def business_login(
     body: LoginIn,
@@ -56,6 +144,13 @@ async def business_login(
     biz = await biz_repo.get_by_id(admin.business_id)
     if biz is None:
         raise AuthError("Business not found.")
+
+    if biz.status == BusinessStatus.PENDING:
+        raise AuthError("Your business application is still pending approval.")
+    if biz.status == BusinessStatus.SUSPENDED:
+        raise AuthError("Your business account has been suspended.")
+    if biz.status != BusinessStatus.ACTIVE:
+        raise AuthError("Your business account is not active.")
 
     token = create_token(sub=admin.username, role="admin", business_slug=biz.slug)
     return BusinessTokenOut(

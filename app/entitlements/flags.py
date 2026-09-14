@@ -48,12 +48,25 @@ class FeatureFlag:
     CHANNEL_WEB = "channel.web"
     CHANNEL_WHATSAPP = "channel.whatsapp"
     CHANNEL_TELEGRAM = "channel.telegram"
+    CHANNEL_INSTAGRAM = "channel.instagram"
     CHANNEL_PAYMENTS = "channel.payments"
 
     # ── Catalog & content limits ─────────────────────────────────────────────
     # None = unlimited.
     PRODUCTS_LIMIT = "catalog.products_limit"
     KNOWLEDGE_ARTICLES_LIMIT = "knowledge.articles_limit"
+
+    # ── Modules (catalog/CRM feature areas an admin can toggle per business) ────
+    MODULE_PRODUCTS = "module.products"
+    MODULE_SERVICES = "module.services"
+    MODULE_OFFERS = "module.offers"
+    MODULE_COUPONS = "module.coupons"
+    MODULE_APPOINTMENTS = "module.appointments"
+    MODULE_CUSTOMERS = "module.customers"
+    # Admin-defined custom field *schemas* for products/services/offers/coupons.
+    # Gates only the ability to define/edit field definitions — entities keep
+    # validating against whatever definitions already exist regardless.
+    MODULE_CUSTOM_FIELDS = "module.custom_fields"
 
     # ── Operations ───────────────────────────────────────────────────────────
     ORDERS_ENABLED = "orders.enabled"
@@ -179,14 +192,22 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "request_feature_access",
             "check_feature_request_status",
         ],
-        FeatureFlag.CHANNEL_WEB: True,
+        FeatureFlag.CHANNEL_WEB: False,
         FeatureFlag.CHANNEL_WHATSAPP: False,
         FeatureFlag.CHANNEL_TELEGRAM: False,
+        FeatureFlag.CHANNEL_INSTAGRAM: False,
         FeatureFlag.CHANNEL_PAYMENTS: False,
         FeatureFlag.PRODUCTS_LIMIT: 25,
         FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT: 5,
+        FeatureFlag.MODULE_PRODUCTS: False,
+        FeatureFlag.MODULE_SERVICES: False,
+        FeatureFlag.MODULE_OFFERS: False,
+        FeatureFlag.MODULE_COUPONS: False,
+        FeatureFlag.MODULE_APPOINTMENTS: False,
+        FeatureFlag.MODULE_CUSTOMERS: False,
+        FeatureFlag.MODULE_CUSTOM_FIELDS: False,
         FeatureFlag.ORDERS_ENABLED: False,
-        FeatureFlag.SUPPORT_TICKETS_ENABLED: True,
+        FeatureFlag.SUPPORT_TICKETS_ENABLED: False,
         FeatureFlag.CREDENTIALS_ENABLED: False,
         FeatureFlag.UI_AGENT_RUNS: False,
         FeatureFlag.UI_WEBHOOK_EVENTS: False,
@@ -232,9 +253,17 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: False,
         FeatureFlag.CHANNEL_TELEGRAM: False,
+        FeatureFlag.CHANNEL_INSTAGRAM: False,
         FeatureFlag.CHANNEL_PAYMENTS: False,
         FeatureFlag.PRODUCTS_LIMIT: 100,
         FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT: 20,
+        FeatureFlag.MODULE_PRODUCTS: True,
+        FeatureFlag.MODULE_SERVICES: True,
+        FeatureFlag.MODULE_OFFERS: False,
+        FeatureFlag.MODULE_COUPONS: False,
+        FeatureFlag.MODULE_APPOINTMENTS: False,
+        FeatureFlag.MODULE_CUSTOMERS: True,
+        FeatureFlag.MODULE_CUSTOM_FIELDS: False,
         FeatureFlag.ORDERS_ENABLED: True,
         FeatureFlag.SUPPORT_TICKETS_ENABLED: True,
         FeatureFlag.CREDENTIALS_ENABLED: False,
@@ -297,9 +326,17 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: True,
         FeatureFlag.CHANNEL_TELEGRAM: True,
+        FeatureFlag.CHANNEL_INSTAGRAM: True,
         FeatureFlag.CHANNEL_PAYMENTS: True,
         FeatureFlag.PRODUCTS_LIMIT: 1000,
         FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT: 100,
+        FeatureFlag.MODULE_PRODUCTS: True,
+        FeatureFlag.MODULE_SERVICES: True,
+        FeatureFlag.MODULE_OFFERS: True,
+        FeatureFlag.MODULE_COUPONS: True,
+        FeatureFlag.MODULE_APPOINTMENTS: True,
+        FeatureFlag.MODULE_CUSTOMERS: True,
+        FeatureFlag.MODULE_CUSTOM_FIELDS: True,
         FeatureFlag.ORDERS_ENABLED: True,
         FeatureFlag.SUPPORT_TICKETS_ENABLED: True,
         FeatureFlag.CREDENTIALS_ENABLED: False,
@@ -327,9 +364,17 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: True,
         FeatureFlag.CHANNEL_TELEGRAM: True,
+        FeatureFlag.CHANNEL_INSTAGRAM: True,
         FeatureFlag.CHANNEL_PAYMENTS: True,
         FeatureFlag.PRODUCTS_LIMIT: None,
         FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT: None,
+        FeatureFlag.MODULE_PRODUCTS: True,
+        FeatureFlag.MODULE_SERVICES: True,
+        FeatureFlag.MODULE_OFFERS: True,
+        FeatureFlag.MODULE_COUPONS: True,
+        FeatureFlag.MODULE_APPOINTMENTS: True,
+        FeatureFlag.MODULE_CUSTOMERS: True,
+        FeatureFlag.MODULE_CUSTOM_FIELDS: True,
         FeatureFlag.ORDERS_ENABLED: True,
         FeatureFlag.SUPPORT_TICKETS_ENABLED: True,
         FeatureFlag.CREDENTIALS_ENABLED: True,

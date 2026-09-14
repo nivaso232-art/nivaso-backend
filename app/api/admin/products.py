@@ -13,12 +13,15 @@ from app.api.deps import get_business, get_session
 from app.core.errors import ForbiddenError
 from app.core.uow import UnitOfWork
 from app.entitlements.flags import FeatureFlag
-from app.entitlements.resolver import get_limit, resolve
+from app.entitlements.resolver import check, get_limit, resolve
 from app.models.business import Business
 from app.models.enums import ProductStatus
+from app.models.field_definition import FieldEntityType
 from app.repositories.entitlements import EntitlementRepository
 from app.models.product import Product
+from app.repositories.field_definitions import FieldDefinitionRepository
 from app.repositories.products import ProductRepository
+from app.services.custom_fields import validate_custom_fields
 
 router = APIRouter(prefix="/{slug}/products", tags=["admin:products"])
 
@@ -100,7 +103,10 @@ async def create_product(
 ) -> ProductOut:
     ent_repo = EntitlementRepository(session)
     ent = await ent_repo.get_or_create(business.id)
-    limit = get_limit(resolve(ent.plan, ent.overrides), FeatureFlag.PRODUCTS_LIMIT)
+    resolved = resolve(ent.plan, ent.overrides)
+    if not check(resolved, FeatureFlag.MODULE_PRODUCTS):
+        raise ForbiddenError("The Products module is not enabled for this business.")
+    limit = get_limit(resolved, FeatureFlag.PRODUCTS_LIMIT)
     if limit is not None:
         repo = ProductRepository(session, business.id)
         count = await repo.count()
@@ -109,6 +115,11 @@ async def create_product(
                 f"Product limit reached ({limit}). Upgrade your plan to add more.",
                 details={"limit": limit, "current": count, "flag": FeatureFlag.PRODUCTS_LIMIT},
             )
+
+    field_repo = FieldDefinitionRepository(session, business.id)
+    definitions = await field_repo.list_by_entity_type(FieldEntityType.PRODUCT)
+    cleaned_attributes = await validate_custom_fields(definitions, body.attributes)
+
     product = Product(
         name=body.name,
         description=body.description,
@@ -117,7 +128,7 @@ async def create_product(
         sku=body.sku,
         category=body.category,
         status=body.status,
-        metadata_=body.attributes,
+        metadata_=cleaned_attributes,
     )
     async with UnitOfWork(session):
         repo = ProductRepository(session, business.id)
@@ -160,6 +171,12 @@ async def update_product(
     repo = ProductRepository(session, business.id)
     product = await repo.get_or_raise(pid)
 
+    cleaned_attributes: dict[str, Any] | None = None
+    if body.attributes is not None:
+        field_repo = FieldDefinitionRepository(session, business.id)
+        definitions = await field_repo.list_by_entity_type(FieldEntityType.PRODUCT)
+        cleaned_attributes = await validate_custom_fields(definitions, body.attributes)
+
     async with UnitOfWork(session):
         if body.name is not None:
             product.name = body.name
@@ -175,8 +192,8 @@ async def update_product(
             product.category = body.category
         if body.status is not None:
             product.status = body.status
-        if body.attributes is not None:
-            product.metadata_ = body.attributes
+        if cleaned_attributes is not None:
+            product.metadata_ = cleaned_attributes
 
     return ProductOut.from_orm(product)
 

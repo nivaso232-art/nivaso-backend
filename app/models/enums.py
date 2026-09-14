@@ -20,6 +20,7 @@ from enum import StrEnum
 
 
 class BusinessStatus(StrEnum):
+    PENDING = "pending"
     ACTIVE = "active"
     SUSPENDED = "suspended"
     INACTIVE = "inactive"

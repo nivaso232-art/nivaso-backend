@@ -133,13 +133,20 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        # Strip pydantic-core's `ctx` dict from each error, which for a
+        # field_validator's `raise ValueError(...)` holds the raw exception
+        # object itself — not JSON-serializable, and left in by default it
+        # crashes this very handler into an unrelated 500. (This FastAPI
+        # version's `RequestValidationError.errors()` has no include_context
+        # kwarg, so strip it manually instead.)
+        errors = [{k: v for k, v in e.items() if k != "ctx"} for e in exc.errors()]
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={
                 "error": {
                     "code": "validation_error",
                     "message": "Request payload failed validation.",
-                    "details": {"errors": exc.errors()},
+                    "details": {"errors": errors},
                 }
             },
         )

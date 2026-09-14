@@ -18,20 +18,25 @@ import structlog
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, mock_payments, web
+from app.api import auth, mock_payments, module_catalog, web
 from app.api.admin import (
     agent_runs,
+    appointments,
     businesses,
     channels,
+    coupons,
     credentials,
+    custom_fields,
     customers,
     dashboard,
     fulfillments,
     knowledge,
     metrics,
     model_registry,
+    offers,
     orders,
     products,
+    services,
     support,
     webhook_events,
 )
@@ -116,12 +121,18 @@ app.include_router(mock_payments.router)
 
 # -- Auth routes (public — no auth required) ----------------------------------
 app.include_router(auth.router)
+app.include_router(module_catalog.router)
 
 # -- Admin routes (internal only, require X-Internal-Key) --------------------
 _admin_deps = [Depends(require_admin_auth)]
 
 app.include_router(businesses.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(products.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(services.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(offers.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(coupons.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(appointments.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(custom_fields.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(support.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(customers.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(knowledge.router, prefix="/admin", dependencies=_admin_deps)

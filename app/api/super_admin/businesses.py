@@ -8,6 +8,9 @@ Routes:
   PATCH  /super-admin/businesses/{slug}/plan      → assign plan tier
   PATCH  /super-admin/businesses/{slug}/overrides → set per-flag overrides
   PATCH  /super-admin/businesses/{slug}/status    → suspend / reactivate
+  GET    /super-admin/businesses/pending          → businesses awaiting approval
+  PATCH  /super-admin/businesses/{slug}/approve   → approve a pending signup
+  PATCH  /super-admin/businesses/{slug}/reject    → reject (delete) a pending signup
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ class SuperAdminBusinessOut(BaseModel):
     business_slug: str
     business_status: str
     business_timezone: str
-    plan: str
+    plan: str | None
     overrides: dict[str, Any]
     resolved: dict[str, Any]
     granted_by: str | None
@@ -58,7 +61,7 @@ class SuperAdminBusinessCreatedOut(SuperAdminBusinessOut):
 
 def _build_out(
     biz: Business,
-    plan: str,
+    plan: str | None,
     overrides: dict,
     granted_by: str | None,
     resolved_flags: dict | None = None,
@@ -83,7 +86,7 @@ def _build_out(
     )
 
 
-async def _safe_get_ent(business_id: object) -> tuple[str, dict, str | None, dict | None]:
+async def _safe_get_ent(business_id: object) -> tuple[str | None, dict, str | None, dict | None]:
     """Return (plan, overrides, granted_by, resolved_flags) using an isolated session.
 
     resolved_flags is computed via EntitlementRepository.resolved() which respects
@@ -108,24 +111,26 @@ class CreateBusinessIn(BaseModel):
     name: str
     description: str | None = None
     timezone: str = "Asia/Kolkata"
-    plan: str = "free"
+    # None = no plan assigned (the default — access comes purely from
+    # overrides). Assigning a plan here is an optional bulk-grant shortcut.
+    plan: str | None = None
 
     @field_validator("plan")
     @classmethod
-    def _valid_plan(cls, v: str) -> str:
-        if v not in VALID_PLANS:
-            raise ValueError(f"Unknown plan '{v}'. Valid: {sorted(VALID_PLANS)}")
+    def _valid_plan(cls, v: str | None) -> str | None:
+        if v is not None and v not in VALID_PLANS:
+            raise ValueError(f"Unknown plan '{v}'. Valid: {sorted(VALID_PLANS)} or null.")
         return v
 
 
 class PlanIn(BaseModel):
-    plan: str
+    plan: str | None
 
     @field_validator("plan")
     @classmethod
-    def _valid_plan(cls, v: str) -> str:
-        if v not in VALID_PLANS:
-            raise ValueError(f"Unknown plan '{v}'. Valid: {sorted(VALID_PLANS)}")
+    def _valid_plan(cls, v: str | None) -> str | None:
+        if v is not None and v not in VALID_PLANS:
+            raise ValueError(f"Unknown plan '{v}'. Valid: {sorted(VALID_PLANS)} or null.")
         return v
 
 
@@ -251,6 +256,24 @@ async def get_plan_defaults(session: AsyncSession = Depends(get_session)) -> dic
     return PLAN_DEFAULTS
 
 
+# NOTE: /pending must be declared BEFORE /{slug} for the same reason as
+# /plans/defaults above — otherwise FastAPI would treat "pending" as a slug.
+@router.get("/pending", response_model=list[SuperAdminBusinessOut])
+async def list_pending_businesses(
+    session: AsyncSession = Depends(get_session),
+) -> list[SuperAdminBusinessOut]:
+    """All businesses awaiting super-admin approval."""
+    biz_repo = BusinessRepository(session)
+    businesses = await biz_repo.list_all()
+    pending = [biz for biz in businesses if biz.status == BusinessStatus.PENDING]
+
+    out: list[SuperAdminBusinessOut] = []
+    for biz in pending:
+        plan, overrides, granted_by, resolved_flags = await _safe_get_ent(biz.id)
+        out.append(_build_out(biz, plan, overrides, granted_by, resolved_flags))
+    return out
+
+
 @router.get("/{slug}", response_model=SuperAdminBusinessOut)
 async def get_business(
     slug: str,
@@ -325,6 +348,46 @@ async def set_status(
         await _write_audit(session, biz.id, "status_changed", {"status": body.status})
 
     return _build_out(biz, plan, overrides, granted_by, resolved_flags)
+
+
+@router.patch("/{slug}/approve", response_model=SuperAdminBusinessOut)
+async def approve_business(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+) -> SuperAdminBusinessOut:
+    """Approve a pending business signup, unlocking login."""
+    biz_repo = BusinessRepository(session)
+    biz = await biz_repo.get_by_slug_or_raise(slug)
+
+    if biz.status != BusinessStatus.PENDING:
+        raise ValidationError("Business is not pending approval.")
+
+    async with UnitOfWork(session):
+        biz.status = BusinessStatus.ACTIVE
+        await _write_audit(session, biz.id, "business_approved", {})
+
+    plan, overrides, granted_by, resolved_flags = await _safe_get_ent(biz.id)
+    return _build_out(biz, plan, overrides, granted_by, resolved_flags)
+
+
+@router.patch("/{slug}/reject")
+async def reject_business(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """Reject a pending business signup — deletes the business (and its admin,
+    via cascade) rather than leaving a rejected row lingering.
+    """
+    biz_repo = BusinessRepository(session)
+    biz = await biz_repo.get_by_slug_or_raise(slug)
+
+    if biz.status != BusinessStatus.PENDING:
+        raise ValidationError("Business is not pending approval.")
+
+    async with UnitOfWork(session):
+        await session.delete(biz)
+
+    return {"status": "rejected", "slug": slug}
 
 
 # ── Audit helper (used by plan/override/status routes) ───────────────────────

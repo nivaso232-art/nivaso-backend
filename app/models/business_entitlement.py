@@ -36,12 +36,14 @@ class BusinessEntitlement(UUIDMixin, TimestampMixin, Base):
         index=True,
     )
 
-    # Generic plan tier — free | starter | pro | enterprise.
+    # Generic plan tier — free | starter | pro | enterprise, or None.
     # Stored as plain text (not a pg enum) so adding a new tier needs
-    # no ALTER TYPE migration.
-    plan: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default="free"
-    )
+    # no ALTER TYPE migration. NULL means "no plan assigned" — the business
+    # is governed entirely by ``overrides``, with no plan baseline at all
+    # (see app/entitlements/resolver.py::resolve). Plans are an optional,
+    # super-admin-assigned convenience for bulk-granting many flags at once,
+    # never an automatic default.
+    plan: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # Per-business deviations from the plan baseline.
     overrides: Mapped[dict[str, Any]] = mapped_column(

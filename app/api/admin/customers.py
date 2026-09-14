@@ -17,12 +17,22 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_business, get_session
+from app.core.errors import ForbiddenError
+from app.entitlements.flags import FeatureFlag
+from app.entitlements.resolver import check, resolve
 from app.models.business import Business
 from app.models.customer import Customer, CustomerChannel
 from app.models.enums import Channel
 from app.repositories.customers import CustomerChannelRepository, CustomerRepository
+from app.repositories.entitlements import EntitlementRepository
 
 router = APIRouter(prefix="/{slug}/customers", tags=["admin:customers"])
+
+
+async def _require_customers_module(business: Business, session: AsyncSession) -> None:
+    ent = await EntitlementRepository(session).get_or_create(business.id)
+    if not check(resolve(ent.plan, ent.overrides), FeatureFlag.MODULE_CUSTOMERS):
+        raise ForbiddenError("The Customers module is not enabled for this business.")
 
 # Prefix applied by web.py to all admin_mode=True sessions (current behaviour).
 _ADMIN_PREFIX = "__admin__"
@@ -59,6 +69,7 @@ async def list_customers(
 ) -> list[CustomerOut]:
     """Return real customers — excludes admin Agent Chat test sessions.
 
+
     Admin test sessions are stored with external_user_id prefixed "__admin__"
     (set by web.py when admin_mode=True, regardless of what the frontend sends).
     A customer is shown only when they have at least one non-WEB channel, OR
@@ -66,6 +77,7 @@ async def list_customers(
     The test records stay in the DB so conversation history works in the
     admin chat panel — they are simply excluded from this customer-facing list.
     """
+    await _require_customers_module(business, session)
     # Subquery A: customer has at least one non-WEB channel → definitely real
     has_real_channel = (
         select(func.count(CustomerChannel.id))
@@ -114,6 +126,7 @@ async def list_customer_channels(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> list[ChannelOut]:
+    await _require_customers_module(business, session)
     import uuid
     from app.core.errors import ValidationError
     try:
@@ -140,6 +153,7 @@ async def get_customer(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> CustomerOut:
+    await _require_customers_module(business, session)
     import uuid
     from app.core.errors import ValidationError
     try:

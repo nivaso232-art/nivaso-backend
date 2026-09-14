@@ -7,15 +7,24 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_business, get_session
-from app.core.errors import NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError
 from app.core.uow import UnitOfWork
+from app.entitlements.flags import FeatureFlag
+from app.entitlements.resolver import check, resolve
 from app.models.business import Business
 from app.models.enums import TicketPriority, TicketStatus
 from app.models.support_ticket import SupportTicket
+from app.repositories.entitlements import EntitlementRepository
 from app.repositories.support_tickets import SupportTicketRepository
 from app.services.support_service import SupportService
 
 router = APIRouter(prefix="/{slug}/support", tags=["admin:support"])
+
+
+async def _require_support_module(business: Business, session: AsyncSession) -> None:
+    ent = await EntitlementRepository(session).get_or_create(business.id)
+    if not check(resolve(ent.plan, ent.overrides), FeatureFlag.SUPPORT_TICKETS_ENABLED):
+        raise ForbiddenError("Support tickets are not enabled for this business.")
 
 
 # -- schemas ------------------------------------------------------------------
@@ -62,6 +71,7 @@ async def list_tickets(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> list[TicketOut]:
+    await _require_support_module(business, session)
     repo = SupportTicketRepository(session, business.id)
     if status is not None:
         tickets = await repo.list(limit=limit, order_by=SupportTicket.created_at.desc())
@@ -78,6 +88,7 @@ async def get_ticket(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> TicketOut:
+    await _require_support_module(business, session)
     repo = SupportTicketRepository(session, business.id)
     ticket = await repo.get_by_reference(reference.upper())
     if ticket is None:
@@ -93,6 +104,7 @@ async def update_ticket(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> TicketOut:
+    await _require_support_module(business, session)
     repo = SupportTicketRepository(session, business.id)
     ticket = await repo.get_by_reference(reference.upper())
     if ticket is None:

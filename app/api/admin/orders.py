@@ -13,12 +13,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_business, get_session
+from app.core.errors import ForbiddenError
+from app.entitlements.flags import FeatureFlag
+from app.entitlements.resolver import check, resolve
 from app.models.business import Business
 from app.models.enums import OrderStatus
 from app.models.order import Order, OrderItem
+from app.repositories.entitlements import EntitlementRepository
 from app.repositories.orders import OrderRepository
 
 router = APIRouter(prefix="/{slug}/orders", tags=["admin:orders"])
+
+
+async def _require_orders_module(business: Business, session: AsyncSession) -> None:
+    ent = await EntitlementRepository(session).get_or_create(business.id)
+    if not check(resolve(ent.plan, ent.overrides), FeatureFlag.ORDERS_ENABLED):
+        raise ForbiddenError("Orders are not enabled for this business.")
 
 
 class OrderItemOut(BaseModel):
@@ -79,6 +89,7 @@ async def list_orders(
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> list[OrderOut]:
+    await _require_orders_module(business, session)
     stmt = (
         select(Order)
         .where(Order.business_id == business.id)

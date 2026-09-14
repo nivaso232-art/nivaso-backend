@@ -1,4 +1,12 @@
-"""Super-admin API — feature request review queue."""
+"""Super-admin API — feature request review queue.
+
+A request's ``feature`` is normally a plain entitlement flag key (e.g.
+``"module.services"``, ``"channel.whatsapp"``) and approving it writes
+``{feature: True}`` into the business's overrides. As a special case, a
+``feature`` value of ``"plan:<tier>"`` (e.g. ``"plan:pro"``) represents a
+plan-upgrade request — approving it calls ``set_plan`` instead of touching
+overrides, since plan is a distinct field, not a boolean flag.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session
 from app.core.errors import NotFoundError, ValidationError
 from app.core.uow import UnitOfWork
+from app.entitlements.flags import VALID_PLANS
+from app.models.feature_request import FeatureRequest
 from app.repositories.businesses import BusinessRepository
 from app.repositories.entitlements import EntitlementRepository
 from app.repositories.feature_requests import FeatureRequestRepository
@@ -18,6 +28,49 @@ from app.repositories.feature_requests import FeatureRequestRepository
 router = APIRouter(prefix="/feature-requests", tags=["super-admin:feature-requests"])
 
 _VALID_STATUSES = {"approved", "denied"}
+_PLAN_REQUEST_PREFIX = "plan:"
+
+
+async def _apply_review(
+    session: AsyncSession,
+    req: FeatureRequest,
+    *,
+    status: str,
+    reviewed_by: str,
+    notes: str | None,
+) -> FeatureRequest:
+    """Review one request and, on approval, actually grant it.
+
+    Shared by the single-request review route and the approve-all route so
+    both apply identical grant logic.
+    """
+    fr_repo = FeatureRequestRepository(session)
+    reviewed = await fr_repo.review(req.id, status=status, reviewed_by=reviewed_by, notes=notes)
+    assert reviewed is not None  # caller already confirmed it exists
+
+    if status == "approved":
+        ent_repo = EntitlementRepository(session)
+        if req.feature.startswith(_PLAN_REQUEST_PREFIX):
+            plan = req.feature.removeprefix(_PLAN_REQUEST_PREFIX)
+            if plan not in VALID_PLANS:
+                raise ValidationError(f"Unknown plan '{plan}' in request feature key.")
+            await ent_repo.set_plan(req.business_id, plan, granted_by=reviewed_by)
+        else:
+            ent = await ent_repo.get_or_create(req.business_id)
+            new_overrides = {**ent.overrides, req.feature: True}
+            await ent_repo.set_overrides(req.business_id, new_overrides, granted_by=reviewed_by)
+
+    try:
+        from app.repositories.audit_log import AuditLogRepository
+        await AuditLogRepository(session).record(
+            business_id=req.business_id,
+            action=f"request_{status}",
+            details={"feature": req.feature, "notes": notes},
+        )
+    except Exception:
+        pass
+
+    return reviewed
 
 
 class FeatureRequestOut(BaseModel):
@@ -68,16 +121,60 @@ async def list_feature_requests(
     ]
 
 
+def _out(req: FeatureRequest, *, business_slug: str) -> FeatureRequestOut:
+    return FeatureRequestOut(
+        id=str(req.id),
+        business_id=str(req.business_id),
+        business_slug=business_slug,
+        feature=req.feature,
+        reason=req.reason,
+        status=req.status,
+        reviewed_by=req.reviewed_by,
+        notes=req.notes,
+        created_at=req.created_at.isoformat(),
+    )
+
+
+# NOTE: /business/{slug}/approve-all must be declared BEFORE /{request_id} —
+# otherwise FastAPI would try to parse "business" as a request_id UUID and
+# 404 before ever reaching this route. Same precedent as /plans/defaults in
+# app/api/super_admin/businesses.py.
+@router.patch("/business/{slug}/approve-all", response_model=list[FeatureRequestOut])
+async def approve_all_for_business(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+) -> list[FeatureRequestOut]:
+    """Approve every pending feature request for one business in one action —
+    the "approve as an entire request" alternative to reviewing each
+    module/integration/plan-upgrade one at a time.
+    """
+    biz_repo = BusinessRepository(session)
+    biz = await biz_repo.get_by_slug_or_raise(slug)
+
+    fr_repo = FeatureRequestRepository(session)
+    pending = [r for r in await fr_repo.list_for_business(biz.id) if r.status == "pending"]
+
+    out: list[FeatureRequestOut] = []
+    async with UnitOfWork(session):
+        for req in pending:
+            reviewed = await _apply_review(
+                session, req, status="approved", reviewed_by="super-admin", notes=None
+            )
+            out.append(_out(reviewed, business_slug=biz.slug))
+    return out
+
+
 @router.patch("/{request_id}", response_model=FeatureRequestOut)
 async def review_feature_request(
     request_id: str,
     body: ReviewIn,
     session: AsyncSession = Depends(get_session),
 ) -> FeatureRequestOut:
-    """Approve or deny a feature request.
+    """Approve or deny one feature request individually.
 
     On approval, the flag is written directly into the business's entitlement
-    overrides so the capability activates immediately — no manual override step.
+    overrides (or, for a "plan:<tier>" request, the plan is assigned) so the
+    capability activates immediately — no manual override step.
     """
     if body.status not in _VALID_STATUSES:
         raise ValidationError(
@@ -97,43 +194,10 @@ async def review_feature_request(
         raise ValidationError("Only pending requests can be reviewed.")
 
     async with UnitOfWork(session):
-        reviewed = await fr_repo.review(
-            rid,
-            status=body.status,
-            reviewed_by="super-admin",
-            notes=body.notes,
+        reviewed = await _apply_review(
+            session, req, status=body.status, reviewed_by="super-admin", notes=body.notes
         )
-
-        if body.status == "approved":
-            ent_repo = EntitlementRepository(session)
-            ent = await ent_repo.get_or_create(req.business_id)
-            new_overrides = {**ent.overrides, req.feature: True}
-            await ent_repo.set_overrides(
-                req.business_id, new_overrides, granted_by="super-admin"
-            )
-
-        # Audit trail
-        try:
-            from app.repositories.audit_log import AuditLogRepository
-            await AuditLogRepository(session).record(
-                business_id=req.business_id,
-                action=f"request_{body.status}",
-                details={"feature": req.feature, "notes": body.notes},
-            )
-        except Exception:
-            pass
 
     biz_repo = BusinessRepository(session)
     business = await biz_repo.get_or_raise(req.business_id)
-
-    return FeatureRequestOut(
-        id=str(reviewed.id),
-        business_id=str(reviewed.business_id),
-        business_slug=business.slug,
-        feature=reviewed.feature,
-        reason=reviewed.reason,
-        status=reviewed.status,
-        reviewed_by=reviewed.reviewed_by,
-        notes=reviewed.notes,
-        created_at=reviewed.created_at.isoformat(),
-    )
+    return _out(reviewed, business_slug=business.slug)

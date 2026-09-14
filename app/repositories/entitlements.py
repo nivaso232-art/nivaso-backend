@@ -25,11 +25,16 @@ class EntitlementRepository:
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_or_create(self, business_id: uuid.UUID) -> BusinessEntitlement:
-        """Return existing entitlement row, or create a free-tier one."""
+        """Return existing entitlement row, or create one with no plan assigned.
+
+        ``plan=None`` is deliberate: a new business starts with zero default
+        access. Everything must come from an explicit override, granted via
+        request approval or a direct super-admin toggle.
+        """
         existing = await self.get(business_id)
         if existing:
             return existing
-        row = BusinessEntitlement(business_id=business_id, plan="free", overrides={})
+        row = BusinessEntitlement(business_id=business_id, plan=None, overrides={})
         self.session.add(row)
         await self.session.flush()
         return row
@@ -43,6 +48,10 @@ class EntitlementRepository:
           3. Per-business overrides   (granted by super-admin per-tenant)
         """
         row = await self.get_or_create(business_id)
+
+        if row.plan is None:
+            # No plan assigned — no baseline at all, purely overrides.
+            return resolve(None, row.overrides)
 
         try:
             # Use a separate session for plan_definitions so its own committed
@@ -65,7 +74,7 @@ class EntitlementRepository:
     async def set_plan(
         self,
         business_id: uuid.UUID,
-        plan: str,
+        plan: str | None,
         *,
         granted_by: str,
     ) -> BusinessEntitlement:
