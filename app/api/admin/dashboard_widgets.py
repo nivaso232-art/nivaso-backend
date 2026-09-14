@@ -30,7 +30,7 @@ from app.api.deps import get_business, get_session
 from app.core.errors import ForbiddenError, NotFoundError
 from app.entitlements.dashboard_widgets import widget_allowed
 from app.entitlements.flags import FeatureFlag
-from app.entitlements.resolver import get_limit, resolve
+from app.entitlements.resolver import check, get_limit, resolve
 from app.models.agent_run import AgentRun
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.business import Business
@@ -53,6 +53,7 @@ from app.models.offer import Offer, OfferStatus
 from app.models.order import Order, OrderItem
 from app.models.payment import Payment
 from app.models.product import Product
+from app.models.service import Service, ServiceStatus
 from app.models.support_ticket import SupportTicket
 from app.repositories.entitlements import EntitlementRepository
 
@@ -278,37 +279,80 @@ async def _list_needs_attention(business: Business, session: AsyncSession) -> Li
 
 
 async def _gauge_plan_usage(business: Business, session: AsyncSession) -> GaugeWidgetOut:
+    """Usage-vs-limit bars for this business's catalog modules.
+
+    The item list is dynamic: only the catalog modules actually enabled for
+    this business (per its resolved entitlements) get an item, so a
+    Services-only business doesn't see a meaningless "Products: 0" bar.
+    Knowledge Articles has no module gate today, so it always appears.
+    """
     ent = await EntitlementRepository(session).get_or_create(business.id)
     resolved = resolve(ent.plan, ent.overrides)
 
-    products_used = await session.scalar(
-        select(func.count()).where(
-            Product.business_id == business.id,
-            Product.status != ProductStatus.ARCHIVED,
-        )
-    ) or 0
-    knowledge_used = await session.scalar(
-        select(func.count()).where(Knowledge.business_id == business.id)
-    ) or 0
+    items: list[GaugeItemOut] = []
 
-    products_limit = get_limit(resolved, FeatureFlag.PRODUCTS_LIMIT)
-    knowledge_limit = get_limit(resolved, FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT)
-
-    return GaugeWidgetOut(
-        label="Plan Usage",
-        items=[
+    if check(resolved, FeatureFlag.MODULE_PRODUCTS):
+        products_used = await session.scalar(
+            select(func.count()).where(
+                Product.business_id == business.id,
+                Product.status != ProductStatus.ARCHIVED,
+            )
+        ) or 0
+        products_limit = get_limit(resolved, FeatureFlag.PRODUCTS_LIMIT)
+        items.append(
             GaugeItemOut(
                 label="Products",
                 used=float(products_used),
                 limit=float(products_limit) if products_limit is not None else None,
-            ),
-            GaugeItemOut(
-                label="Knowledge Articles",
-                used=float(knowledge_used),
-                limit=float(knowledge_limit) if knowledge_limit is not None else None,
-            ),
-        ],
+            )
+        )
+
+    if check(resolved, FeatureFlag.MODULE_SERVICES):
+        services_used = await session.scalar(
+            select(func.count()).where(
+                Service.business_id == business.id,
+                Service.status != ServiceStatus.ARCHIVED,
+            )
+        ) or 0
+        items.append(
+            GaugeItemOut(label="Services", used=float(services_used), limit=None)
+        )
+
+    if check(resolved, FeatureFlag.MODULE_OFFERS):
+        offers_used = await session.scalar(
+            select(func.count()).where(
+                Offer.business_id == business.id,
+                Offer.status == OfferStatus.ACTIVE,
+            )
+        ) or 0
+        items.append(
+            GaugeItemOut(label="Offers", used=float(offers_used), limit=None)
+        )
+
+    if check(resolved, FeatureFlag.MODULE_COUPONS):
+        coupons_used = await session.scalar(
+            select(func.count()).where(
+                Coupon.business_id == business.id,
+                Coupon.status == CouponStatus.ACTIVE,
+            )
+        ) or 0
+        items.append(
+            GaugeItemOut(label="Coupons", used=float(coupons_used), limit=None)
+        )
+
+    knowledge_used = await session.scalar(
+        select(func.count()).where(Knowledge.business_id == business.id)
+    ) or 0
+    knowledge_limit = get_limit(resolved, FeatureFlag.KNOWLEDGE_ARTICLES_LIMIT)
+    items.append(
+        GaugeItemOut(
+            label="Knowledge Articles",
+            used=float(knowledge_used),
+            limit=float(knowledge_limit) if knowledge_limit is not None else None,
+        )
     )
+
+    return GaugeWidgetOut(label="Plan Usage", items=items)
 
 
 # ── Gated: existing "advanced" widgets, individually gated ──────────────────

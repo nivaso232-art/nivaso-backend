@@ -19,6 +19,7 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import auth, mock_payments, module_catalog, web
+from app.api.admin import ai_usage as admin_ai_usage
 from app.api.admin import (
     agent_runs,
     appointments,
@@ -150,6 +151,7 @@ app.include_router(model_registry.router, prefix="/admin", dependencies=_admin_d
 app.include_router(dashboard.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(dashboard_widgets.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(notifications.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(admin_ai_usage.router, prefix="/admin", dependencies=_admin_deps)
 
 # -- Super-admin routes (Nivaso operators only — separate key) ----------------
 _super_deps = [Depends(require_super_admin_auth)]
