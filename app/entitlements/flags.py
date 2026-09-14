@@ -135,6 +135,9 @@ DASHBOARD_BASIC_WIDGET_KEYS: frozenset[str] = frozenset({
 # Enforced server-side on every GET/PATCH; cannot be bypassed by plan config.
 # Absence means no dependency (widget shows whenever the plan allows it).
 WIDGET_DEPENDENCIES: dict[str, str] = {
+    "stat.products":           FeatureFlag.MODULE_PRODUCTS,
+    "stat.customers":          FeatureFlag.MODULE_CUSTOMERS,
+    "stat.products_delivered": FeatureFlag.ORDERS_ENABLED,
     "stat.open_tickets":       FeatureFlag.SUPPORT_TICKETS_ENABLED,
     "stat.agent_runs_today":   FeatureFlag.UI_AGENT_RUNS,
     "chart.agent_runs_7d":     FeatureFlag.UI_AGENT_RUNS,

@@ -154,9 +154,36 @@ async def submit_feature_request(
     body: FeatureRequestIn,
     session: AsyncSession = Depends(get_session),
 ) -> FeatureRequestOut:
-    """Submit a feature access request for super-admin review."""
+    """Submit a feature access request for super-admin review.
+
+    A widget's own underlying module must already be enabled before the
+    widget itself can be requested — e.g. you can't request the "Orders
+    Today" widget until the Orders module is actually on for this business.
+    Modules/integrations/plan-upgrade requests have no such prerequisite.
+    """
     biz_repo = BusinessRepository(session)
     biz = await biz_repo.get_by_slug_or_raise(slug)
+
+    from app.core.errors import ValidationError
+    from app.entitlements.flags import WIDGET_DEPENDENCIES
+    from app.models.module_catalog import ModuleCatalogCategory
+    from app.repositories.module_catalog import ModuleCatalogRepository
+
+    catalog_entry = next(
+        (e for e in await ModuleCatalogRepository(session).list_active() if e.key == body.feature),
+        None,
+    )
+    if catalog_entry is not None and catalog_entry.category == ModuleCatalogCategory.WIDGET:
+        dep_flag = WIDGET_DEPENDENCIES.get(body.feature)
+        if dep_flag is not None:
+            ent = await EntitlementRepository(session).get_or_create(biz.id)
+            resolved = resolve(ent.plan, ent.overrides)
+            if not resolved.get(dep_flag):
+                raise ValidationError(
+                    f"Enable the required module before requesting the '{body.feature}' widget.",
+                    details={"widget": body.feature, "required_flag": dep_flag},
+                )
+
     from app.core.db import SessionFactory
     try:
         async with SessionFactory() as iso:

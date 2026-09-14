@@ -19,11 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session
 from app.core.errors import NotFoundError, ValidationError
 from app.core.uow import UnitOfWork
-from app.entitlements.flags import VALID_PLANS
+from app.entitlements.flags import VALID_PLANS, WIDGET_DEPENDENCIES
+from app.entitlements.resolver import resolve
 from app.models.feature_request import FeatureRequest
+from app.models.module_catalog import ModuleCatalogCategory
 from app.repositories.businesses import BusinessRepository
 from app.repositories.entitlements import EntitlementRepository
 from app.repositories.feature_requests import FeatureRequestRepository
+from app.repositories.module_catalog import ModuleCatalogRepository
 
 router = APIRouter(prefix="/feature-requests", tags=["super-admin:feature-requests"])
 
@@ -56,6 +59,24 @@ async def _apply_review(
                 raise ValidationError(f"Unknown plan '{plan}' in request feature key.")
             await ent_repo.set_plan(req.business_id, plan, granted_by=reviewed_by)
         else:
+            # Defense in depth: a widget's underlying module must still be
+            # enabled at approval time too — it may have been disabled again
+            # between when the request was submitted and now.
+            catalog_entry = next(
+                (e for e in await ModuleCatalogRepository(session).list_active() if e.key == req.feature),
+                None,
+            )
+            if catalog_entry is not None and catalog_entry.category == ModuleCatalogCategory.WIDGET:
+                dep_flag = WIDGET_DEPENDENCIES.get(req.feature)
+                if dep_flag is not None:
+                    ent = await ent_repo.get_or_create(req.business_id)
+                    if not resolve(ent.plan, ent.overrides).get(dep_flag):
+                        raise ValidationError(
+                            f"Cannot approve — the module required by the '{req.feature}' "
+                            f"widget is not enabled for this business.",
+                            details={"widget": req.feature, "required_flag": dep_flag},
+                        )
+
             ent = await ent_repo.get_or_create(req.business_id)
             new_overrides = {**ent.overrides, req.feature: True}
             await ent_repo.set_overrides(req.business_id, new_overrides, granted_by=reviewed_by)

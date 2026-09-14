@@ -78,7 +78,10 @@ async def business_signup(
     """
     deduped_modules = list(dict.fromkeys(body.requested_modules))
 
-    valid_keys = await ModuleCatalogRepository(session).get_active_keys()
+    # Widgets are deliberately excluded here — a widget's underlying module
+    # must already be granted before it can be requested, which is never true
+    # at signup. See ModuleCatalogRepository.get_signup_requestable_keys.
+    valid_keys = await ModuleCatalogRepository(session).get_signup_requestable_keys()
     invalid = [k for k in deduped_modules if k not in valid_keys]
     if invalid:
         raise ValidationError(

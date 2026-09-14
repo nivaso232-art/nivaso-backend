@@ -10,7 +10,7 @@ from collections.abc import Sequence
 
 from sqlalchemy import select
 
-from app.models.module_catalog import ModuleCatalogEntry
+from app.models.module_catalog import ModuleCatalogCategory, ModuleCatalogEntry
 from app.repositories.base import GlobalRepository
 
 
@@ -28,3 +28,15 @@ class ModuleCatalogRepository(GlobalRepository[ModuleCatalogEntry]):
     async def get_active_keys(self) -> frozenset[str]:
         rows = await self.list_active()
         return frozenset(row.key for row in rows)
+
+    async def get_signup_requestable_keys(self) -> frozenset[str]:
+        """Active catalog keys a business may request at signup time.
+
+        Excludes ``category == 'widget'`` — a widget's own WIDGET_DEPENDENCIES
+        module must already be granted before it can be requested (see
+        app/entitlements/dashboard_widgets.py), which is never true at signup
+        (nothing is granted yet). Widgets only become requestable later, via
+        the self-service feature-request endpoint, once their module is on.
+        """
+        rows = await self.list_active()
+        return frozenset(row.key for row in rows if row.category != ModuleCatalogCategory.WIDGET)
