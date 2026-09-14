@@ -4,3 +4,10 @@ pytest>=8.3.0
 pytest-asyncio>=0.24.0
 ruff>=0.8.0
 mypy>=1.13.0
+
+# Makes Python trust the OS certificate store instead of certifi's bundled
+# list. Needed on corporate networks (e.g. Zscaler) that TLS-intercept
+# Google's API domains with their own CA - without this, google-genai calls
+# fail with CERTIFICATE_VERIFY_FAILED even though the OS already trusts the
+# intercepting CA. Harmless where there's no interception.
+pip-system-certs>=4.0
