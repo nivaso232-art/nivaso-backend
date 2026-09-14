@@ -66,18 +66,19 @@ def month_start_utc(today: date | None = None) -> datetime:
     return datetime(d.year, d.month, 1, tzinfo=timezone.utc)
 
 
-async def get_monthly_usage(
+async def get_usage_for_range(
     session: AsyncSession,
     business_id: uuid.UUID,
     *,
-    month_start: date | None = None,
+    start: datetime,
+    end: datetime,
 ) -> dict:
-    """Sum AgentRun tokens/cost for ``business_id`` from ``month_start`` to now.
+    """Sum AgentRun tokens/cost for ``business_id`` where ``start <= created_at < end``.
 
-    ``month_start`` defaults to the 1st of the current UTC month.
+    The general-purpose version — callers pick the window. See
+    ``get_monthly_usage`` for the "so far this month" convenience wrapper
+    used by the usage-limit check.
     """
-    start = month_start_utc(month_start)
-
     row = (
         await session.execute(
             select(
@@ -89,6 +90,7 @@ async def get_monthly_usage(
             ).where(
                 AgentRun.business_id == business_id,
                 AgentRun.created_at >= start,
+                AgentRun.created_at < end,
             )
         )
     ).one()
@@ -103,6 +105,22 @@ async def get_monthly_usage(
             input_tokens, output_tokens, int(row.cache_read), int(row.cache_creation)
         ),
     }
+
+
+async def get_monthly_usage(
+    session: AsyncSession,
+    business_id: uuid.UUID,
+    *,
+    month_start: date | None = None,
+) -> dict:
+    """Sum AgentRun tokens/cost for ``business_id`` from ``month_start`` to now.
+
+    ``month_start`` defaults to the 1st of the current UTC month. Used by the
+    usage-limit check, which always wants "so far this month" — not a
+    caller-chosen range, see ``get_usage_for_range`` for that.
+    """
+    start = month_start_utc(month_start)
+    return await get_usage_for_range(session, business_id, start=start, end=datetime.now(timezone.utc))
 
 
 async def check_and_notify_usage_limit(session: AsyncSession, business_id: uuid.UUID) -> None:

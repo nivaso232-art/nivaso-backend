@@ -16,6 +16,7 @@ into the SQL itself.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -24,13 +25,29 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_business, get_session
+from app.core.dates import parse_date_range
 from app.models.agent_run import AgentRun
 from app.models.business import Business
 from app.models.conversation import Conversation
 from app.models.customer import Customer
-from app.services.ai_usage import estimate_cost, get_monthly_usage, month_start_utc
+from app.services.ai_usage import estimate_cost, get_usage_for_range, month_start_utc
 
 router = APIRouter(prefix="/{slug}/ai-usage", tags=["admin:ai-usage"])
+
+
+def _parse_range(start: str | None, end: str | None) -> tuple[datetime, datetime]:
+    """Parse optional ``YYYY-MM-DD`` query params into a UTC [start, end) window.
+
+    Defaults to "so far this calendar month" when neither is given, matching
+    this endpoint's original behavior. Thin wrapper around the shared
+    ``app.core.dates.parse_date_range`` with this endpoint's own defaults.
+    """
+    return parse_date_range(
+        start,
+        end,
+        default_start=month_start_utc,
+        default_end=lambda: datetime.now(timezone.utc),
+    )
 
 
 class ChannelUsageOut(BaseModel):
@@ -55,19 +72,23 @@ class AiUsageOut(BaseModel):
 @router.get("", response_model=AiUsageOut)
 async def get_ai_usage(
     slug: str,
+    start: str | None = None,
+    end: str | None = None,
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> AiUsageOut:
-    """Current-month AI usage for this business, broken down by channel and customer.
+    """AI usage for this business over ``[start, end]`` (both ``YYYY-MM-DD``,
+    inclusive), broken down by channel and customer. Defaults to "so far this
+    calendar month" when neither is given.
 
-    ``total`` matches ``get_monthly_usage`` exactly (every ``AgentRun`` this
-    month, no join). ``by_channel``/``by_customer`` inner-join to
-    ``Conversation`` (and ``Customer``), so an ``AgentRun`` with no
-    ``conversation_id`` contributes to ``total`` but not to either breakdown.
+    ``total`` covers every ``AgentRun`` in range (no join). ``by_channel``/
+    ``by_customer`` inner-join to ``Conversation`` (and ``Customer``), so an
+    ``AgentRun`` with no ``conversation_id`` contributes to ``total`` but not
+    to either breakdown.
     """
-    month_start = month_start_utc()
+    range_start, range_end = _parse_range(start, end)
 
-    usage = await get_monthly_usage(session, business.id)
+    usage = await get_usage_for_range(session, business.id, start=range_start, end=range_end)
     total = {
         "runs": usage["runs"],
         "cost_usd": usage["cost_usd"],
@@ -88,7 +109,8 @@ async def get_ai_usage(
             .join(Conversation, AgentRun.conversation_id == Conversation.id)
             .where(
                 AgentRun.business_id == business.id,
-                AgentRun.created_at >= month_start,
+                AgentRun.created_at >= range_start,
+                AgentRun.created_at < range_end,
             )
             .group_by(Conversation.channel)
         )
@@ -120,7 +142,8 @@ async def get_ai_usage(
             .join(Customer, Conversation.customer_id == Customer.id)
             .where(
                 AgentRun.business_id == business.id,
-                AgentRun.created_at >= month_start,
+                AgentRun.created_at >= range_start,
+                AgentRun.created_at < range_end,
             )
             .group_by(Conversation.customer_id, Customer.name)
         )

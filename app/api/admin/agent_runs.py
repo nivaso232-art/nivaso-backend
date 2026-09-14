@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_business, get_session
+from app.core.errors import ValidationError
 from app.models.agent_run import AgentRun, USD_PER_MTOK_INPUT, USD_PER_MTOK_OUTPUT
 from app.models.business import Business
 
@@ -63,15 +66,33 @@ async def list_agent_runs(
     slug: str,
     limit: int = 50,
     offset: int = 0,
+    start: str | None = None,
+    end: str | None = None,
     business: Business = Depends(get_business),
     session: AsyncSession = Depends(get_session),
 ) -> list[AgentRunOut]:
-    stmt = (
-        select(AgentRun)
-        .where(AgentRun.business_id == business.id)
-        .order_by(AgentRun.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+    """Most recent runs first. ``start``/``end`` (``YYYY-MM-DD``, inclusive)
+    optionally restrict to a date range — omitted means no date filter at all
+    (the original, unfiltered "most recent N" behavior).
+    """
+    stmt = select(AgentRun).where(AgentRun.business_id == business.id)
+
+    if start or end:
+        try:
+            if start:
+                stmt = stmt.where(
+                    AgentRun.created_at
+                    >= datetime.combine(date.fromisoformat(start), datetime.min.time(), tzinfo=timezone.utc)
+                )
+            if end:
+                stmt = stmt.where(
+                    AgentRun.created_at
+                    < datetime.combine(date.fromisoformat(end), datetime.min.time(), tzinfo=timezone.utc)
+                    + timedelta(days=1)
+                )
+        except ValueError:
+            raise ValidationError("start/end must be ISO dates (YYYY-MM-DD).")
+
+    stmt = stmt.order_by(AgentRun.created_at.desc()).limit(limit).offset(offset)
     rows = (await session.execute(stmt)).scalars().all()
     return [AgentRunOut.from_orm(r) for r in rows]

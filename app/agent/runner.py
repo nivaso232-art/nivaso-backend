@@ -307,7 +307,15 @@ class AgentRunner:
                         base_tools = [t for t in base_tools if t["name"] in self.allowed_tool_names]
                     # Admin tools (extra_tools) are rendered as strict=False so they
                     # don't count toward Anthropic's 20-strict-tool limit. Customer-
-                    # facing base tools stay strict for schema safety.
+                    # facing base tools stay strict for schema safety — unless an
+                    # unrestricted business (no plan, or a plan with ai.tools=None)
+                    # ends up with the full registry (currently 22 tools), which
+                    # alone exceeds Anthropic's cap. Degrade those to non-strict
+                    # rather than 400 the whole turn; deterministic per business
+                    # since base_tools is always the same fixed-order registry
+                    # subset, so the prompt cache still hits consistently.
+                    if len(base_tools) > 20:
+                        base_tools = [{**t, "strict": False} for t in base_tools]
                     extra_api = [{**t.to_api_tool(), "strict": False} for t in self.extra_tools]
                     all_tools = base_tools + extra_api
                     response = await _client.messages.create(
