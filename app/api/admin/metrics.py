@@ -15,7 +15,7 @@ from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_business, get_session
-from app.models.agent_run import USD_PER_MTOK_INPUT, USD_PER_MTOK_OUTPUT, AgentRun
+from app.models.agent_run import AgentRun
 from app.models.business import Business
 from app.models.conversation import Conversation
 from app.models.customer import Customer, CustomerChannel
@@ -33,6 +33,7 @@ from app.models.knowledge import Knowledge
 from app.models.payment import Payment
 from app.models.product import Product
 from app.models.support_ticket import SupportTicket
+from app.services.ai_usage import estimate_cost
 
 router = APIRouter(tags=["admin:metrics"])
 
@@ -84,15 +85,6 @@ def _bucket_by_year(daily: list[tuple[date, Decimal]], years: int = 5) -> list[d
         if day.year in sums:
             sums[day.year] += amount
     return [{"label": str(k), "amount": float(sums[k])} for k in keys]
-
-
-def _estimate_cost(input_tok: int, output_tok: int, cache_read: int, cache_creation: int) -> float:
-    billed = input_tok + cache_creation * 1.25 + cache_read * 0.1
-    return round(
-        billed / 1_000_000 * USD_PER_MTOK_INPUT
-        + output_tok / 1_000_000 * USD_PER_MTOK_OUTPUT,
-        4,
-    )
 
 
 @router.get("/{slug}/metrics")
@@ -277,7 +269,7 @@ async def get_metrics(
                 "count": int(today_row.count),
                 "tokens": int(today_row.input_tokens) + int(today_row.output_tokens),
                 "avg_latency_ms": int(today_row.avg_latency or 0),
-                "estimated_cost_usd": _estimate_cost(
+                "estimated_cost_usd": estimate_cost(
                     int(today_row.input_tokens),
                     int(today_row.output_tokens),
                     int(today_row.cache_read),

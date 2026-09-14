@@ -42,6 +42,7 @@ from app.models.agent_run import AgentRun
 from app.models.conversation import Message
 from app.models.enums import MessageStatus, MessageType, SenderType
 from app.repositories.agent_runs import AgentRunRepository
+from app.services.ai_usage import check_and_notify_usage_limit
 from app.services.conversation_service import ConversationService
 
 log = structlog.get_logger(__name__)
@@ -435,6 +436,11 @@ class AgentRunner:
                     metadata_={"request_ids": request_ids},
                 )
                 await runs_repo.add(run)
+
+                # Never raises - see check_and_notify_usage_limit's own
+                # try/except. Runs inside this same UnitOfWork/session so the
+                # notification (if any) commits atomically with the run.
+                await check_and_notify_usage_limit(self.ctx.session, self.ctx.business_id)
 
                 log.info(
                     "agent_turn_complete",

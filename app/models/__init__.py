@@ -23,6 +23,7 @@ from app.models.field_definition import FieldDefinition
 from app.models.fulfillment import Fulfillment
 from app.models.knowledge import Knowledge
 from app.models.module_catalog import ModuleCatalogEntry
+from app.models.notification import Notification
 from app.models.offer import Offer
 from app.models.order import Order, OrderItem
 from app.models.payment import Payment
@@ -51,6 +52,7 @@ __all__ = [
     "Knowledge",
     "Message",
     "ModuleCatalogEntry",
+    "Notification",
     "Offer",
     "Order",
     "OrderItem",

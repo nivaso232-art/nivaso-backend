@@ -34,6 +34,7 @@ from app.api.admin import (
     knowledge,
     metrics,
     model_registry,
+    notifications,
     offers,
     orders,
     products,
@@ -41,6 +42,7 @@ from app.api.admin import (
     support,
     webhook_events,
 )
+from app.api.super_admin import ai_usage as super_ai_usage
 from app.api.super_admin import audit_log as super_audit_log
 from app.api.super_admin import business_rules as super_business_rules
 from app.api.super_admin import businesses as super_businesses
@@ -147,6 +149,7 @@ app.include_router(metrics.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(model_registry.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(dashboard.router, prefix="/admin", dependencies=_admin_deps)
 app.include_router(dashboard_widgets.router, prefix="/admin", dependencies=_admin_deps)
+app.include_router(notifications.router, prefix="/admin", dependencies=_admin_deps)
 
 # -- Super-admin routes (Nivaso operators only — separate key) ----------------
 _super_deps = [Depends(require_super_admin_auth)]
@@ -156,6 +159,7 @@ app.include_router(super_chat.router, prefix="/super-admin", dependencies=_super
 app.include_router(super_feature_requests.router, prefix="/super-admin", dependencies=_super_deps)
 app.include_router(super_audit_log.router, prefix="/super-admin", dependencies=_super_deps)
 app.include_router(super_plans.router, prefix="/super-admin", dependencies=_super_deps)
+app.include_router(super_ai_usage.router, prefix="/super-admin", dependencies=_super_deps)
 
 # -- Web test channel --------------------------------------------------------
 # No auth in local so you can curl /web/chat directly while testing; still

@@ -43,6 +43,11 @@ class FeatureFlag:
     AI_MAX_ITERATIONS = "ai.max_iterations"
     # Subset of tool names the agent may call. None = all tools.
     AI_TOOLS = "ai.tools"
+    # Monthly USD spend cap, super-admin set. None = unlimited. Crossing this
+    # triggers an in-app notification (see app/services/ai_usage.py) - it is
+    # purely an observability/alerting cap, not an enforcement gate that
+    # blocks agent turns.
+    AI_USAGE_LIMIT_USD = "ai.usage_limit_usd"
 
     # ── Channels ────────────────────────────────────────────────────────────
     CHANNEL_WEB = "channel.web"
@@ -218,6 +223,7 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "request_feature_access",
             "check_feature_request_status",
         ],
+        FeatureFlag.AI_USAGE_LIMIT_USD: None,
         FeatureFlag.CHANNEL_WEB: False,
         FeatureFlag.CHANNEL_WHATSAPP: False,
         FeatureFlag.CHANNEL_TELEGRAM: False,
@@ -276,6 +282,7 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "request_feature_access",
             "check_feature_request_status",
         ],
+        FeatureFlag.AI_USAGE_LIMIT_USD: None,
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: False,
         FeatureFlag.CHANNEL_TELEGRAM: False,
@@ -349,6 +356,7 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
             "request_feature_access",
             "check_feature_request_status",
         ],
+        FeatureFlag.AI_USAGE_LIMIT_USD: None,
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: True,
         FeatureFlag.CHANNEL_TELEGRAM: True,
@@ -387,6 +395,7 @@ PLAN_DEFAULTS: dict[str, dict[str, Any]] = {
         FeatureFlag.AI_CUSTOM_MODEL_PICKER: True,
         FeatureFlag.AI_MAX_ITERATIONS: None,
         FeatureFlag.AI_TOOLS: None,
+        FeatureFlag.AI_USAGE_LIMIT_USD: None,
         FeatureFlag.CHANNEL_WEB: True,
         FeatureFlag.CHANNEL_WHATSAPP: True,
         FeatureFlag.CHANNEL_TELEGRAM: True,
